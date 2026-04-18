@@ -2862,7 +2862,9 @@ class AdminViewPermissionsTest(TestCase):
         self.assertContains(response, "<h1>Select article to view</h1>")
         self.assertEqual(response.context["title"], "Select article to view")
         response = self.client.get(article_change_url)
-        self.assertContains(response, "<title>View article | Django site admin</title>")
+        self.assertContains(
+            response, "<title>- | View article | Django site admin</title>"
+        )
         self.assertContains(response, "<h1>View article</h1>")
         self.assertContains(response, "<label>Extra form field:</label>")
         self.assertContains(
@@ -2891,7 +2893,7 @@ class AdminViewPermissionsTest(TestCase):
         self.assertEqual(response.context["title"], "Change article")
         self.assertContains(
             response,
-            "<title>Change article | Django site admin</title>",
+            "<title>- | Change article | Django site admin</title>",
         )
         self.assertContains(response, "<h1>Change article</h1>")
         post = self.client.post(article_change_url, change_dict)
@@ -3016,7 +3018,9 @@ class AdminViewPermissionsTest(TestCase):
         self.client.force_login(self.viewuser)
         response = self.client.get(change_url)
         self.assertEqual(response.context["title"], "View article")
-        self.assertContains(response, "<title>View article | Django site admin</title>")
+        self.assertContains(
+            response, "<title>- | View article | Django site admin</title>"
+        )
         self.assertContains(response, "<h1>View article</h1>")
         self.assertContains(
             response,
@@ -3606,6 +3610,180 @@ class AdminViewPermissionsTest(TestCase):
             "</li>",
             html=True,
         )
+
+
+@override_settings(ROOT_URLCONF="admin_views.urls")
+class AdminConsecutiveWhiteSpaceObjectDisplayTest(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = User.objects.create_superuser(
+            username="   ", password="secret", email="super@example.com"
+        )
+        cls.obj = CoverLetter.objects.create(author="             ")
+        cls.change_link = reverse(
+            "admin:admin_views_coverletter_change", args=(cls.obj.pk,)
+        )
+
+    def setUp(self):
+        self.client.force_login(self.user)
+
+    def test_display_consecutive_whitespace_object_in_breadcrumbs(self):
+        user_change_link = reverse("admin:auth_user_change", args=(self.user.pk,))
+        cases = [
+            (
+                self.change_link,
+                '<li><a href="/test_admin/admin/admin_views/coverletter/">'
+                'Cover letters</a></li><li aria-current="page">-</li>',
+            ),
+            (
+                reverse("admin:admin_views_coverletter_delete", args=(self.obj.pk,)),
+                f'<li><a href="{self.change_link}">-</a></li><li aria-current="page">'
+                "Delete</li>",
+            ),
+            (
+                reverse("admin:admin_views_coverletter_history", args=(self.obj.pk,)),
+                f'<li><a href="{self.change_link}">-</a></li><li aria-current="page">'
+                "History</li>",
+            ),
+            (
+                reverse("admin:auth_user_password_change", args=(self.user.pk,)),
+                f'<li><a href="{user_change_link}">-</a></li><li aria-current="page">'
+                "Change password</li>",
+            ),
+        ]
+        for url, expected_breadcrumbs in cases:
+            with self.subTest(url=url, expected_breadcrumbs=expected_breadcrumbs):
+                response = self.client.get(url)
+                self.assertContains(response, expected_breadcrumbs, html=True)
+
+    def test_display_consecutive_whitespace_object_in_delete_confirmation_page(self):
+        response = self.client.get(
+            reverse("admin:admin_views_coverletter_delete", args=(self.obj.pk,))
+        )
+        self.assertContains(
+            response,
+            "Are you sure you want to delete the cover letter “-”?",
+        )
+
+        # delete protected case
+        q = Question.objects.create(question="    ")
+        Answer.objects.create(question=q, answer="Because.")
+        response = self.client.get(
+            reverse("admin:admin_views_question_delete", args=(q.pk,))
+        )
+        self.assertContains(
+            response,
+            "Deleting the question “-” would require deleting the following protected "
+            "related objects",
+        )
+
+        # delete forbidden case
+        no_perms_user = User.objects.create_user(
+            username="no-perm", password="secret", is_staff=True
+        )
+        no_perms_user.user_permissions.add(
+            get_perm(Question, get_permission_codename("view", Question._meta))
+        )
+        no_perms_user.user_permissions.add(
+            get_perm(Question, get_permission_codename("delete", Question._meta))
+        )
+        self.client.force_login(no_perms_user)
+        response = self.client.get(
+            reverse("admin:admin_views_question_delete", args=(q.pk,))
+        )
+        self.assertContains(
+            response,
+            "Deleting the question “-” would result in deleting related objects, "
+            "but your account doesn't have permission to delete "
+            "the following types of objects",
+        )
+
+    def test_display_consecutive_whitespace_object_in_changelist(self):
+        response = self.client.get(reverse("admin:admin_views_coverletter_changelist"))
+        self.assertContains(response, f'<a href="{self.change_link}">-</a>')
+
+    def test_display_consecutive_whitespace_object_in_deleted_object(self):
+        response = self.client.get(
+            reverse("admin:admin_views_coverletter_delete", args=(self.obj.pk,))
+        )
+        self.assertContains(
+            response,
+            '<ul id="deleted-objects">'
+            f'<li>Cover letter: <a href="{self.change_link}">-</a></li></ul>',
+            html=True,
+        )
+
+    def test_display_consecutive_whitespace_object_in_recent_action(self):
+        for action in [ADDITION, DELETION]:
+            LogEntry.objects.log_actions(
+                user_id=self.user.pk,
+                queryset=[self.obj],
+                action_flag=action,
+                change_message=[],
+                single_object=True,
+            )
+
+        response = self.client.get(reverse("admin:index"))
+        self.assertContains(
+            response,
+            '<li class="addlink"><span class="visually-hidden">Added:</span>'
+            f'<a href="{self.change_link}">-</a><br><span class="mini quiet">'
+            "Cover letter</span></li>",
+            html=True,
+        )
+        self.assertContains(
+            response,
+            '<li class="deletelink">'
+            '<span class="visually-hidden">Deleted:</span>-'
+            '<br><span class="mini quiet">Cover letter</span></li>',
+            html=True,
+        )
+
+    def test_display_consecutive_whitespace_object_in_messages(self):
+        buttons = ["_save", "_continue", "_addanother"]
+        for button in buttons:
+            body = {"author": self.obj.author, button: "1"}
+            with self.subTest(obj=self.obj, button=button):
+                response = self.client.post(
+                    reverse("admin:admin_views_coverletter_add"), body, follow=True
+                )
+                latest_cl = CoverLetter.objects.latest("id")
+                change_link = reverse(
+                    "admin:admin_views_coverletter_change", args=(latest_cl.pk,)
+                )
+                self.assertContains(
+                    response,
+                    f'The cover letter “<a href="{change_link}">-</a>” '
+                    "was added successfully.",
+                )
+                response = self.client.post(
+                    reverse(
+                        "admin:admin_views_coverletter_change", args=(latest_cl.pk,)
+                    ),
+                    {**body, "author": "             "},
+                    follow=True,
+                )
+                self.assertContains(
+                    response,
+                    f'The cover letter “<a href="{change_link}">-</a>” '
+                    "was changed successfully.",
+                )
+
+        new_obj = CoverLetter.objects.create(author=self.obj.author)
+        response = self.client.post(
+            reverse("admin:admin_views_coverletter_delete", args=(new_obj.pk,)),
+            {"post": "yes"},
+            follow=True,
+        )
+        self.assertContains(response, "The cover letter “-” was deleted successfully.")
+
+    def test_display_consecutive_whitespace_object_in_sub_title(self):
+        response = self.client.get(self.change_link)
+        self.assertContains(response, "<h2>-</h2>")
+        response = self.client.get(
+            reverse("admin:admin_views_coverletter_history", args=(self.obj.pk,))
+        )
+        self.assertContains(response, "<h1>Change history: -</h1>")
 
 
 @override_settings(
@@ -7133,12 +7311,10 @@ class SeleniumTests(AdminSeleniumTestCase):
             By.CSS_SELECTOR, "#content-main .field-difficulty, .form-multiline"
         )
         # Two field boxes.
-        field_boxes = multiline.find_elements(By.CSS_SELECTOR, "div > div.fieldBox")
+        field_boxes = multiline.find_elements(By.XPATH, "./*")
         self.assertEqual(len(field_boxes), 2)
         # One of them is under a <fieldset>.
-        under_fieldset = multiline.find_elements(
-            By.CSS_SELECTOR, "fieldset > div > div.fieldBox"
-        )
+        under_fieldset = multiline.find_elements(By.TAG_NAME, "fieldset")
         self.assertEqual(len(under_fieldset), 1)
         self.take_screenshot("horizontal_fieldset")
 
@@ -7282,6 +7458,26 @@ class SeleniumTests(AdminSeleniumTestCase):
         changelist_filter = self.selenium.find_element(By.ID, "changelist-filter")
         self.assertTrue(changelist_filter.is_displayed())
         self.take_screenshot("filter_sidebar")
+
+    @screenshot_cases(["desktop_size", "mobile_size", "rtl", "dark", "high_contrast"])
+    def test_form_errors_render_layout(self):
+        from selenium.webdriver.common.by import By
+
+        self.admin_login(
+            username="super", password="secret", login_url=reverse("admin:index")
+        )
+        self.selenium.get(
+            self.live_server_url + reverse("admin:admin_views_language_add")
+        )
+
+        with self.wait_page_loaded():
+            self.selenium.find_element(By.NAME, "_save").click()
+
+        form_rows = self.selenium.find_elements(By.CSS_SELECTOR, "div.form-row")
+        for row in form_rows:
+            error_list = row.find_element(By.CSS_SELECTOR, "ul.errorlist")
+            self.assertTrue(error_list.is_displayed())
+        self.take_screenshot("error_list")
 
 
 @override_settings(ROOT_URLCONF="admin_views.urls")
@@ -8885,10 +9081,18 @@ class TestLabelVisibility(TestCase):
         )
 
     def assert_fieldline_visible(self, response):
-        self.assertContains(response, '<div class="form-row field-first field-second">')
+        self.assertContains(
+            response,
+            "<div class="
+            '"form-row flex-container form-multiline field-first field-second">',
+        )
 
     def assert_fieldline_hidden(self, response):
-        self.assertContains(response, '<div class="form-row hidden')
+        self.assertContains(
+            response,
+            "<div class="
+            '"form-row flex-container form-multiline hidden field-first field-second">',
+        )
 
 
 @override_settings(ROOT_URLCONF="admin_views.urls")
@@ -9266,7 +9470,7 @@ class AdminSiteFinalCatchAllPatternTests(TestCase):
         response = self.client.get(url)
         self.assertRedirects(response, "%s?next=%s" % (reverse("admin:login"), url))
 
-    def test_unkown_url_without_trailing_slash_if_not_authenticated(self):
+    def test_unknown_url_without_trailing_slash_if_not_authenticated(self):
         url = reverse("admin:article_extra_json")[:-1]
         response = self.client.get(url)
         self.assertRedirects(response, "%s?next=%s" % (reverse("admin:login"), url))

@@ -498,6 +498,7 @@ class PictureAdmin(admin.ModelAdmin):
 class LanguageAdmin(admin.ModelAdmin):
     list_display = ["iso", "shortlist", "english_name", "name"]
     list_editable = ["shortlist"]
+    fields = [("iso", "english_name"), "name"]
 
 
 class RecommendationAdmin(admin.ModelAdmin):
@@ -708,6 +709,8 @@ class CoverLetterAdmin(admin.ModelAdmin):
     instances. Note that the CoverLetter model defines a __str__ method.
     For testing fix for ticket #14529.
     """
+
+    formfield_overrides = {models.CharField: {"strip": False}}
 
     def get_queryset(self, request):
         return super().get_queryset(request).defer("date_written")

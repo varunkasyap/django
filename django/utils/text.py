@@ -185,13 +185,7 @@ class TruncateWordsHTMLParser(TruncateHTMLParser):
 class Truncator(SimpleLazyObject):
     """
     An object used to truncate text, either by characters or words.
-
-    When truncating HTML text (either chars or words), input will be limited to
-    at most `MAX_LENGTH_HTML` characters.
     """
-
-    # 5 million characters are approximately 4000 text pages or 3 web pages.
-    MAX_LENGTH_HTML = 5_000_000
 
     def __init__(self, text):
         super().__init__(lambda: str(text))
@@ -388,6 +382,7 @@ def compress_sequence(sequence, *, max_random_bytes=None):
         yield buf.read()
         for item in sequence:
             zfile.write(item)
+            zfile.flush()
             data = buf.read()
             if data:
                 yield data
@@ -404,6 +399,7 @@ async def acompress_sequence(sequence, *, max_random_bytes=None):
         yield buf.read()
         async for item in sequence:
             zfile.write(item)
+            zfile.flush()
             data = buf.read()
             if data:
                 yield data
