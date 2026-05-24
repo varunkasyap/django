@@ -26,6 +26,7 @@ else:
     from django.db import connection, connections
     from django.test import TestCase, TransactionTestCase
     from django.test.runner import get_max_test_processes, parallel_type
+    from django.test.playwright import PlaywrightTestCase, PlaywrightTestCaseBase
     from django.test.selenium import SeleniumTestCase, SeleniumTestCaseBase
     from django.test.utils import NullTimeKeeper, TimeKeeper, get_runner
     from django.utils.deprecation import RemovedInDjango70Warning
@@ -340,6 +341,27 @@ class ActionSelenium(argparse.Action):
         setattr(namespace, self.dest, browsers)
 
 
+class ActionPlaywright(argparse.Action):
+    """
+    Validate the comma-separated list of requested browsers.
+    """
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError as e:
+            raise ImproperlyConfigured(f"Error loading playwright module: {e}")
+        browsers = values.split(",")
+        for browser in browsers:
+            try:
+                PlaywrightTestCaseBase.import_browser(browser)
+            except ImportError:
+                raise argparse.ArgumentError(
+                    self, "Playwright browser specification '%s' is not valid." % browser
+                )
+        setattr(namespace, self.dest, browsers)
+
+
 def django_tests(
     verbosity,
     interactive,
@@ -617,6 +639,18 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
+        "--playwright",
+        action=ActionPlaywright,
+        metavar="BROWSERS",
+        help="A comma-separated list of browsers to run the Playwright tests against.",
+
+    )
+    parser.add_argument(
+        "--playwright-headless",
+        action="store_true",
+        help="Run Playwright tests in headless mode, if the browser supports the option.",
+    )
+    parser.add_argument(
         "--debug-sql",
         action="store_true",
         help="Turn on the SQL query logger within tests.",
@@ -759,6 +793,24 @@ if __name__ == "__main__":
         if options.screenshots:
             options.tags = ["screenshot"]
             SeleniumTestCase.screenshots = options.screenshots
+
+    if options.playwright:
+        if (
+            multiprocessing.get_start_method() in {"spawn", "forkserver"}
+            and options.parallel != 1
+        ):
+            parser.error(
+                "You cannot use --playwright with parallel tests on this system. "
+                "Pass --parallel=1 to use --playwright."
+            )
+        if not options.tags:
+            options.tags = ["playwright"]
+        elif "playwright" not in options.tags:
+            options.tags.append("playwright")
+        # TODO VK external_host and playwright_hub ??
+        PlaywrightTestCaseBase.headless = options.playwright_headless
+        PlaywrightTestCaseBase.browsers = options.playwright
+        # TODO VK screenshots checks
 
     if options.bisect:
         bisect_tests(

@@ -11,6 +11,7 @@ from django import forms
 from django.conf import settings
 from django.contrib import admin
 from django.contrib.admin import widgets
+from django.contrib.admin.playwright_tests import AdminPlaywrightTestCase
 from django.contrib.admin.tests import AdminSeleniumTestCase
 from django.contrib.auth.models import User
 from django.core.files.storage import default_storage
@@ -997,6 +998,16 @@ class RelatedFieldWidgetWrapperTests(SimpleTestCase):
 @override_settings(ROOT_URLCONF="admin_widgets.urls")
 class AdminWidgetSeleniumTestCase(AdminSeleniumTestCase):
     available_apps = ["admin_widgets"] + AdminSeleniumTestCase.available_apps
+
+    def setUp(self):
+        self.u1 = User.objects.create_superuser(
+            username="super", password="secret", email="super@example.com"
+        )
+
+
+@override_settings(ROOT_URLCONF="admin_widgets.urls")
+class AdminWidgetPlaywrightTestCase(AdminPlaywrightTestCase):
+    available_apps = ["admin_widgets"] + AdminPlaywrightTestCase.available_apps
 
     def setUp(self):
         self.u1 = User.objects.create_superuser(

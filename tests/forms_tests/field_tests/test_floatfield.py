@@ -1,6 +1,7 @@
 from django.core.exceptions import ValidationError
 from django.forms import FloatField, NumberInput
 from django.test import SimpleTestCase
+from django.test.playwright import PlaywrightTestCase
 from django.test.selenium import SeleniumTestCase
 from django.test.utils import override_settings
 from django.urls import reverse
@@ -159,5 +160,23 @@ class FloatFieldHTMLTest(SeleniumTestCase):
         number_input.send_keys("0.5")
         is_valid = self.selenium.execute_script(
             "return document.getElementById('id_number').checkValidity()"
+        )
+        self.assertTrue(is_valid)
+
+
+@override_settings(ROOT_URLCONF="forms_tests.urls")
+class FloatFieldHTMLPlaywrightTest(PlaywrightTestCase):
+    available_apps = ["forms_tests"]
+
+    def test_float_field_rendering_passes_client_side_validation(self):
+        """
+        Rendered widget allows non-integer value with the client-side
+        validation.
+        """
+        self.page.goto(self.live_server_url + reverse("form_view"))
+        number_input = self.page.locator("#id_number")
+        number_input.fill("0.5")
+        is_valid = self.page.evaluate(
+            "document.getElementById('id_number').checkValidity()"
         )
         self.assertTrue(is_valid)
