@@ -1,9 +1,10 @@
 from django.contrib.admin import ModelAdmin, TabularInline
 from django.contrib.admin.helpers import InlineAdminForm
-from django.contrib.admin.tests import AdminSeleniumTestCase
+from django.contrib.admin.tests import AdminPlaywrightTestCase, AdminSeleniumTestCase
 from django.contrib.auth.models import Permission, User
 from django.contrib.contenttypes.models import ContentType
 from django.test import RequestFactory, TestCase, override_settings
+from django.test.playwright import screenshot_cases as playwright_screenshot_cases
 from django.test.selenium import screenshot_cases
 from django.urls import reverse
 from django.utils.translation import gettext
@@ -2657,4 +2658,633 @@ class SeleniumTests(AdminSeleniumTestCase):
         self.assertGreater(len(options), 0)
         options[0].click()
         selector.find_element(By.CSS_SELECTOR, "p.selector-filter input").click()
+        self.take_screenshot("focus_out")
+
+
+@override_settings(ROOT_URLCONF="admin_inlines.urls")
+class PlaywrightTests(AdminPlaywrightTestCase):
+    available_apps = ["admin_inlines"] + AdminPlaywrightTestCase.available_apps
+
+    def setUp(self):
+        User.objects.create_superuser(
+            username="super", password="secret", email="super@example.com"
+        )
+
+    @playwright_screenshot_cases(
+        ["desktop_size", "mobile_size", "dark", "high_contrast"]
+    )
+    def test_add_stackeds(self):
+        """
+        The "Add another XXX" link correctly adds items to the stacked formset.
+        """
+        self.admin_login(username="super", password="secret")
+        self.page.goto(
+            self.live_server_url + reverse("admin:admin_inlines_holder4_add")
+        )
+
+        inline_id = "#inner4stacked_set-group"
+        rows_selector = "%s .dynamic-inner4stacked_set" % inline_id
+
+        self.expect(self.page.locator(rows_selector)).to_have_count(3)
+        add_button = self.page.get_by_role("button", name="Add another Inner4 stacked")
+        add_button.click()
+        self.expect(self.page.locator(rows_selector)).to_have_count(4)
+        self.take_screenshot("added")
+
+    def test_delete_stackeds(self):
+        self.admin_login(username="super", password="secret")
+        self.page.goto(
+            self.live_server_url + reverse("admin:admin_inlines_holder4_add")
+        )
+
+        inline_id = "#inner4stacked_set-group"
+        rows_selector = "%s .dynamic-inner4stacked_set" % inline_id
+
+        self.expect(self.page.locator(rows_selector)).to_have_count(3)
+
+        add_button = self.page.get_by_role("button", name="Add another Inner4 stacked")
+        add_button.click()
+        add_button.click()
+
+        self.expect(self.page.locator(rows_selector)).to_have_count(5)
+        delete_links = self.page.locator("%s .inline-deletelink" % inline_id)
+        for _ in range(delete_links.count()):
+            delete_links.first.click()
+        self.expect(self.page.locator(rows_selector)).to_have_count(0)
+
+    def test_delete_invalid_stacked_inlines(self):
+        self.admin_login(username="super", password="secret")
+        self.page.goto(
+            self.live_server_url + reverse("admin:admin_inlines_holder4_add")
+        )
+
+        inline_id = "#inner4stacked_set-group"
+        rows_selector = "%s .dynamic-inner4stacked_set" % inline_id
+
+        self.expect(self.page.locator(rows_selector)).to_have_count(3)
+
+        add_button = self.page.get_by_role(
+            "button",
+            name="Add another Inner4 stacked",
+        )
+        add_button.click()
+        add_button.click()
+        self.expect(self.page.locator("#id_inner4stacked_set-4-dummy")).to_have_count(1)
+
+        # Enter some data and click 'Save'.
+        self.page.locator("[name='dummy']").fill("1")
+        self.page.locator("[name='inner4stacked_set-0-dummy']").fill("100")
+        self.page.locator("[name='inner4stacked_set-1-dummy']").fill("101")
+        self.page.locator("[name='inner4stacked_set-2-dummy']").fill("222")
+        self.page.locator("[name='inner4stacked_set-3-dummy']").fill("103")
+        self.page.locator("[name='inner4stacked_set-4-dummy']").fill("222")
+        self.page.locator('input[value="Save"]').click()
+
+        # Sanity check.
+        self.expect(self.page.locator(rows_selector)).to_have_count(5)
+        errorlist = self.page.locator(
+            "%s .dynamic-inner4stacked_set .errorlist li" % inline_id,
+        )
+        self.expect(errorlist.first).to_have_text(
+            "Please correct the duplicate values below."
+        )
+        delete_link = self.page.locator("#inner4stacked_set-4 .inline-deletelink")
+        delete_link.click()
+        self.expect(self.page.locator(rows_selector)).to_have_count(4)
+        self.expect(
+            self.page.locator(
+                "%s .dynamic-inner4stacked_set .errorlist li" % inline_id,
+            )
+        ).to_have_count(0)
+
+        self.page.locator('input[value="Save"]').click()
+        self.expect(self.page.locator(".messagelist .success")).to_be_visible()
+
+        # The objects have been created in the database.
+        self.assertEqual(Inner4Stacked.objects.count(), 4)
+
+    def test_delete_invalid_tabular_inlines(self):
+        self.admin_login(username="super", password="secret")
+        self.page.goto(
+            self.live_server_url + reverse("admin:admin_inlines_holder4_add")
+        )
+
+        inline_id = "#inner4tabular_set-group"
+        rows_selector = "%s .dynamic-inner4tabular_set" % inline_id
+
+        self.expect(self.page.locator(rows_selector)).to_have_count(3)
+
+        add_button = self.page.get_by_role("button", name="Add another Inner4 tabular")
+        add_button.click()
+        add_button.click()
+        self.expect(self.page.locator("#id_inner4tabular_set-4-dummy")).to_have_count(1)
+
+        # Enter some data and click 'Save'.
+        self.page.locator("[name='dummy']").fill("1")
+        self.page.locator("[name='inner4tabular_set-0-dummy']").fill("100")
+        self.page.locator("[name='inner4tabular_set-1-dummy']").fill("101")
+        self.page.locator("[name='inner4tabular_set-2-dummy']").fill("222")
+        self.page.locator("[name='inner4tabular_set-3-dummy']").fill("103")
+        self.page.locator("[name='inner4tabular_set-4-dummy']").fill("222")
+        self.page.locator('input[value="Save"]').click()
+
+        # Sanity Check.
+        self.expect(self.page.locator(rows_selector)).to_have_count(5)
+
+        # Non-field errorlist is in its own <tr> just before
+        # tr#inner4tabular_set-3:
+        errorlist = self.page.locator(
+            "%s #inner4tabular_set-3 + .row-form-errors .errorlist li" % inline_id,
+        )
+        self.expect(errorlist.first).to_have_text(
+            "Please correct the duplicate values below."
+        )
+        delete_link = self.page.locator("#inner4tabular_set-4 .inline-deletelink")
+        delete_link.click()
+
+        self.expect(self.page.locator(rows_selector)).to_have_count(4)
+        self.expect(
+            self.page.locator(
+                "%s .dynamic-inner4tabular_set .errorlist li" % inline_id,
+            )
+        ).to_have_count(0)
+
+        self.page.locator('input[value="Save"]').click()
+        self.expect(self.page.locator(".messagelist .success")).to_be_visible()
+
+        # The objects have been created in the database.
+        self.assertEqual(Inner4Tabular.objects.count(), 4)
+
+    def test_add_inlines(self):
+        """
+        The "Add another XXX" link correctly adds items to the inline form.
+        """
+        self.admin_login(username="super", password="secret")
+        self.page.goto(
+            self.live_server_url + reverse("admin:admin_inlines_profilecollection_add")
+        )
+
+        # There's only one inline to start with and it has the correct ID.
+        self.expect(self.page.locator(".dynamic-profile_set")).to_have_count(1)
+        self.expect(self.page.locator(".dynamic-profile_set").first).to_have_id(
+            "profile_set-0"
+        )
+        self.expect(
+            self.page.locator(
+                ".dynamic-profile_set#profile_set-0"
+                " input[name=profile_set-0-first_name]"
+            )
+        ).to_have_count(1)
+        self.expect(
+            self.page.locator(
+                ".dynamic-profile_set#profile_set-0"
+                " input[name=profile_set-0-last_name]"
+            )
+        ).to_have_count(1)
+
+        # Add an inline
+        self.page.get_by_role("button", name="Add another Profile").click()
+
+        # The inline has been added, it has the right id, and it contains the
+        # correct fields.
+        self.expect(self.page.locator(".dynamic-profile_set")).to_have_count(2)
+        self.expect(self.page.locator(".dynamic-profile_set").nth(1)).to_have_id(
+            "profile_set-1"
+        )
+        self.expect(
+            self.page.locator(
+                ".dynamic-profile_set#profile_set-1"
+                " input[name=profile_set-1-first_name]"
+            )
+        ).to_have_count(1)
+        self.expect(
+            self.page.locator(
+                ".dynamic-profile_set#profile_set-1"
+                " input[name=profile_set-1-last_name]"
+            )
+        ).to_have_count(1)
+        # Let's add another one to be sure
+        self.page.get_by_role("button", name="Add another Profile").click()
+        self.expect(self.page.locator(".dynamic-profile_set")).to_have_count(3)
+        self.expect(self.page.locator(".dynamic-profile_set").nth(2)).to_have_id(
+            "profile_set-2"
+        )
+        self.expect(
+            self.page.locator(
+                ".dynamic-profile_set#profile_set-2"
+                " input[name=profile_set-2-first_name]"
+            )
+        ).to_have_count(1)
+        self.expect(
+            self.page.locator(
+                ".dynamic-profile_set#profile_set-2"
+                " input[name=profile_set-2-last_name]"
+            )
+        ).to_have_count(1)
+
+        # Enter some data and click 'Save'
+        self.page.locator("[name='profile_set-0-first_name']").fill("0 first name 1")
+        self.page.locator("[name='profile_set-0-last_name']").fill("0 last name 2")
+        self.page.locator("[name='profile_set-1-first_name']").fill("1 first name 1")
+        self.page.locator("[name='profile_set-1-last_name']").fill("1 last name 2")
+        self.page.locator("[name='profile_set-2-first_name']").fill("2 first name 1")
+        self.page.locator("[name='profile_set-2-last_name']").fill("2 last name 2")
+
+        self.page.locator('input[value="Save"]').click()
+        self.expect(self.page.locator(".messagelist .success")).to_be_visible()
+
+        # The objects have been created in the database
+        self.assertEqual(ProfileCollection.objects.count(), 1)
+        self.assertEqual(Profile.objects.count(), 3)
+
+    def test_add_inline_link_absent_for_view_only_parent_model(self):
+        user = User.objects.create_user("testing", password="password", is_staff=True)
+        user.user_permissions.add(
+            Permission.objects.get(
+                codename="view_poll",
+                content_type=ContentType.objects.get_for_model(Poll),
+            )
+        )
+        user.user_permissions.add(
+            *Permission.objects.filter(
+                codename__endswith="question",
+                content_type=ContentType.objects.get_for_model(Question),
+            ).values_list("pk", flat=True)
+        )
+        self.admin_login(username="testing", password="password")
+        poll = Poll.objects.create(name="Survey")
+        change_url = reverse("admin:admin_inlines_poll_change", args=(poll.id,))
+        self.page.goto(self.live_server_url + change_url)
+        self.expect(
+            self.page.get_by_role("button", name="Add another Question")
+        ).to_have_count(0)
+
+    def test_delete_inlines(self):
+        self.admin_login(username="super", password="secret")
+        self.page.goto(
+            self.live_server_url + reverse("admin:admin_inlines_profilecollection_add")
+        )
+
+        # Add a few inlines
+        self.page.get_by_role("button", name="Add another Profile").click()
+        self.page.get_by_role("button", name="Add another Profile").click()
+        self.page.get_by_role("button", name="Add another Profile").click()
+        self.page.get_by_role("button", name="Add another Profile").click()
+        self.expect(
+            self.page.locator("#profile_set-group table tr.dynamic-profile_set")
+        ).to_have_count(5)
+        self.expect(
+            self.page.locator(
+                "form#profilecollection_form tr.dynamic-profile_set#profile_set-0"
+            )
+        ).to_have_count(1)
+        self.expect(
+            self.page.locator(
+                "form#profilecollection_form tr.dynamic-profile_set#profile_set-1"
+            )
+        ).to_have_count(1)
+        self.expect(
+            self.page.locator(
+                "form#profilecollection_form tr.dynamic-profile_set#profile_set-2"
+            )
+        ).to_have_count(1)
+        self.expect(
+            self.page.locator(
+                "form#profilecollection_form tr.dynamic-profile_set#profile_set-3"
+            )
+        ).to_have_count(1)
+        self.expect(
+            self.page.locator(
+                "form#profilecollection_form tr.dynamic-profile_set#profile_set-4"
+            )
+        ).to_have_count(1)
+        # Click on a few delete buttons
+        self.page.locator(
+            "form#profilecollection_form tr.dynamic-profile_set#profile_set-1"
+            " td.delete a"
+        ).click()
+        self.page.locator(
+            "form#profilecollection_form tr.dynamic-profile_set#profile_set-2"
+            " td.delete a"
+        ).click()
+        # The rows are gone and the IDs have been re-sequenced
+        self.expect(
+            self.page.locator("#profile_set-group table tr.dynamic-profile_set")
+        ).to_have_count(3)
+        self.expect(
+            self.page.locator(
+                "form#profilecollection_form tr.dynamic-profile_set#profile_set-0"
+            )
+        ).to_have_count(1)
+        self.expect(
+            self.page.locator(
+                "form#profilecollection_form tr.dynamic-profile_set#profile_set-1"
+            )
+        ).to_have_count(1)
+        self.expect(
+            self.page.locator(
+                "form#profilecollection_form tr.dynamic-profile_set#profile_set-2"
+            )
+        ).to_have_count(1)
+
+    @playwright_screenshot_cases(
+        ["desktop_size", "mobile_size", "rtl", "dark", "high_contrast"]
+    )
+    def test_collapsed_inlines(self):
+        # Collapsed inlines use details and summary elements.
+        self.admin_login(username="super", password="secret")
+        self.page.goto(self.live_server_url + reverse("admin:admin_inlines_author_add"))
+        # One field is in a stacked inline, other in a tabular one.
+        test_fields = [
+            "#id_nonautopkbook_set-0-title",
+            "#id_nonautopkbook_set-2-0-title",
+        ]
+        summaries = self.page.locator("summary").all()
+        self.assertEqual(len(summaries), 3)
+        self.take_screenshot("loaded")
+        for show_index, field_name in enumerate(test_fields, 0):
+            self.expect(self.page.locator(field_name)).to_be_hidden()
+            summaries[show_index].click()
+            self.expect(self.page.locator(field_name)).to_be_visible()
+        self.take_screenshot("expanded")
+        for hide_index, field_name in enumerate(test_fields, 0):
+            self.expect(self.page.locator(field_name)).to_be_visible()
+            summaries[hide_index].click()
+            self.expect(self.page.locator(field_name)).to_be_hidden()
+        self.take_screenshot("collapsed")
+
+    @playwright_screenshot_cases(
+        ["desktop_size", "mobile_size", "rtl", "dark", "high_contrast"]
+    )
+    def test_added_stacked_inline_with_collapsed_fields(self):
+        self.admin_login(username="super", password="secret")
+        self.page.goto(
+            self.live_server_url + reverse("admin:admin_inlines_teacher_add")
+        )
+        add_text = gettext("Add another %(verbose_name)s") % {"verbose_name": "Child"}
+        self.page.get_by_role("button", name=add_text).click()
+        test_fields = ["#id_child_set-0-name", "#id_child_set-1-name"]
+        summaries = self.page.locator("summary").all()
+        self.assertEqual(len(summaries), 3)
+        self.take_screenshot("loaded")
+        for show_index, field_name in enumerate(test_fields, 0):
+            self.expect(self.page.locator(field_name)).to_be_hidden()
+            summaries[show_index].click()
+            self.expect(self.page.locator(field_name)).to_be_visible()
+        self.take_screenshot("expanded")
+        for hide_index, field_name in enumerate(test_fields, 0):
+            self.expect(self.page.locator(field_name)).to_be_visible()
+            summaries[hide_index].click()
+            self.expect(self.page.locator(field_name)).to_be_hidden()
+        self.take_screenshot("collapsed")
+
+    def assertBorder(self, locator, border):
+        width, style, color = border.split(" ")
+        border_properties = [
+            "border-bottom-%s",
+            "border-left-%s",
+            "border-right-%s",
+            "border-top-%s",
+        ]
+        for prop in border_properties:
+            self.expect(locator).to_have_css(prop % "width", width)
+        for prop in border_properties:
+            self.expect(locator).to_have_css(prop % "style", style)
+        # Convert hex color to rgb.
+        self.assertRegex(color, "#[0-9a-f]{6}")
+        r, g, b = int(color[1:3], 16), int(color[3:5], 16), int(color[5:], 16)
+        # The value may be expressed as either rgb() or rgba() depending on the
+        # browser.
+        colors = [
+            "rgb(%d, %d, %d)" % (r, g, b),
+            "rgba(%d, %d, %d, 1)" % (r, g, b),
+        ]
+        for prop in border_properties:
+            self.assertIn(
+                locator.evaluate("(el, p) => getComputedStyle(el)[p]", prop % "color"),
+                colors,
+            )
+
+    def test_inline_formset_error_input_border(self):
+        self.admin_login(username="super", password="secret")
+        self.page.goto(
+            self.live_server_url + reverse("admin:admin_inlines_holder5_add")
+        )
+        self.page.locator("#id_dummy").fill("1")
+        fields = ["id_inner5stacked_set-0-dummy", "id_inner5tabular_set-0-dummy"]
+        summaries = self.page.locator("summary").all()
+        for show_index, field_name in enumerate(fields):
+            summaries[show_index].click()
+            self.page.locator("#" + field_name).fill("1")
+
+        # Before save all inputs have default border
+        for inline in ("stacked", "tabular"):
+            for field_name in ("name", "select", "text"):
+                element_id = "id_inner5%s_set-0-%s" % (inline, field_name)
+                self.assertBorder(
+                    self.page.locator("#" + element_id),
+                    "1px solid #cccccc",
+                )
+        self.page.locator('input[value="Save"]').click()
+        # Test the red border around inputs by css selectors
+        stacked_selectors = [".errors input", ".errors select", ".errors textarea"]
+        for selector in stacked_selectors:
+            self.assertBorder(
+                self.page.locator(selector).first,
+                "1px solid #ba2121",
+            )
+        tabular_selectors = [
+            "td ul.errorlist + input",
+            "td ul.errorlist + select",
+            "td ul.errorlist + textarea",
+        ]
+        for selector in tabular_selectors:
+            self.assertBorder(
+                self.page.locator(selector).first,
+                "1px solid #ba2121",
+            )
+
+    def test_inline_formset_error(self):
+        self.admin_login(username="super", password="secret")
+        self.page.goto(
+            self.live_server_url + reverse("admin:admin_inlines_holder5_add")
+        )
+        stacked_inline_details_selector = (
+            "div#inner5stacked_set-group fieldset.module.collapse details"
+        )
+        tabular_inline_details_selector = (
+            "div#inner5tabular_set-group fieldset.module.collapse details"
+        )
+        # Inlines without errors, both inlines collapsed
+        self.page.locator('input[value="Save"]').click()
+        self.expect(
+            self.page.locator(stacked_inline_details_selector + ":not([open])")
+        ).to_have_count(1)
+        self.expect(
+            self.page.locator(tabular_inline_details_selector + ":not([open])")
+        ).to_have_count(1)
+        summaries = self.page.locator("summary").all()
+        self.assertEqual(len(summaries), 2)
+
+        # Inlines with errors, both inlines expanded
+        test_fields = ["#id_inner5stacked_set-0-dummy", "#id_inner5tabular_set-0-dummy"]
+        for show_index, field_name in enumerate(test_fields):
+            summaries[show_index].click()
+            self.page.locator(field_name).fill("1")
+        for hide_index, field_name in enumerate(test_fields):
+            summary = summaries[hide_index]
+            summary.click()
+            self.expect(self.page.locator(field_name)).to_be_hidden()
+        self.page.locator('input[value="Save"]').click()
+        self.expect(self.page.locator(stacked_inline_details_selector)).to_have_count(0)
+        self.expect(self.page.locator(tabular_inline_details_selector)).to_have_count(0)
+
+    def test_inlines_verbose_name(self):
+        """
+        The item added by the "Add another XXX" link must use the correct
+        verbose_name in the inline form.
+        """
+        self.admin_login(username="super", password="secret")
+        # Hide sidebar.
+        self.page.goto(self.live_server_url + reverse("admin:admin_inlines_course_add"))
+        self.page.locator("#toggle-nav-sidebar").click()
+        # Each combination of horizontal/vertical filter with stacked/tabular
+        # inlines.
+        tests = [
+            "admin:admin_inlines_course_add",
+            "admin:admin_inlines_courseproxy_add",
+            "admin:admin_inlines_courseproxy1_add",
+            "admin:admin_inlines_courseproxy2_add",
+        ]
+        css_available_selector = (
+            ".dynamic-class_set#class_set-%s .selector-available-title"
+        )
+        css_chosen_selector = ".dynamic-class_set#class_set-%s .selector-chosen-title"
+
+        for url_name in tests:
+            with self.subTest(url=url_name):
+                self.page.goto(self.live_server_url + reverse(url_name))
+                # First inline shows the verbose_name.
+                available = self.page.locator(css_available_selector % 0)
+                chosen = self.page.locator(css_chosen_selector % 0)
+                self.expect(available).to_contain_text("Available attendant")
+                self.expect(chosen).to_contain_text("Chosen attendant")
+                # Added inline should also have the correct verbose_name.
+                self.page.get_by_role("button", name="Add another Class").click()
+                available = self.page.locator(css_available_selector % 1)
+                chosen = self.page.locator(css_chosen_selector % 1)
+                self.expect(available).to_contain_text("Available attendant")
+                self.expect(chosen).to_contain_text("Chosen attendant")
+                # Third inline should also have the correct verbose_name.
+                self.page.get_by_role("button", name="Add another Class").click()
+                available = self.page.locator(css_available_selector % 2)
+                chosen = self.page.locator(css_chosen_selector % 2)
+                self.expect(available).to_contain_text("Available attendant")
+                self.expect(chosen).to_contain_text("Chosen attendant")
+
+    def test_tabular_inline_layout(self):
+        self.admin_login(username="super", password="secret")
+        self.page.goto(
+            self.live_server_url + reverse("admin:admin_inlines_photographer_add")
+        )
+        tabular_inline = self.page.locator("[data-inline-type='tabular']")
+        headers = tabular_inline.locator("th").all()
+        self.assertEqual(
+            [h.inner_text() for h in headers],
+            [
+                "",
+                "IMAGE",
+                "TITLE",
+                "DESCRIPTION",
+                "CREATION DATE",
+                "UPDATE DATE",
+                "UPDATED BY",
+                "DELETE?",
+            ],
+        )
+        # There are no fieldset section names rendered.
+        self.expect(tabular_inline).not_to_contain_text("Details")
+        # There are no fieldset section descriptions rendered.
+        self.expect(tabular_inline).not_to_contain_text("First group")
+        self.expect(tabular_inline).not_to_contain_text("Second group")
+        self.expect(tabular_inline).not_to_contain_text("Third group")
+        # There are no fieldset classes applied.
+        self.expect(tabular_inline.locator(".collapse")).to_have_count(0)
+        # The table does not overflow the content section.
+        content = self.page.locator("#content-main")
+        tabular_wrapper = self.page.locator("div.tabular.inline-related div.wrapper")
+        table_box = tabular_wrapper.locator("table").bounding_box()
+        wrapper_box = tabular_wrapper.bounding_box()
+        content_box = content.bounding_box()
+        self.assertGreater(table_box["width"], wrapper_box["width"])
+        self.assertLessEqual(wrapper_box["width"], content_box["width"])
+
+    @playwright_screenshot_cases(
+        ["desktop_size", "mobile_size", "rtl", "dark", "high_contrast"]
+    )
+    def test_tabular_inline_delete_layout(self):
+        user = User.objects.create_user("testing", password="password", is_staff=True)
+        et_permission = Permission.objects.filter(
+            content_type=ContentType.objects.get_for_model(ExtraTerrestrial),
+        )
+        s_permission = Permission.objects.filter(
+            codename__in=["view_sighting", "add_sighting"],
+            content_type=ContentType.objects.get_for_model(Sighting),
+        )
+        user.user_permissions.add(*et_permission, *s_permission)
+        self.admin_login(username="testing", password="password")
+        cf = ExtraTerrestrial.objects.create(name="test")
+        url = reverse("admin:admin_inlines_extraterrestrial_change", args=(cf.pk,))
+        self.page.goto(self.live_server_url + url)
+        headers = self.page.locator("fieldset.module thead tr th").all()
+        self.assertHTMLEqual(headers[-1].evaluate("el => el.outerHTML"), "<th></th>")
+        delete = self.page.locator(
+            "fieldset.module tbody" " tr.dynamic-sighting_set:not(.original) td.delete",
+        ).first
+        self.expect(
+            delete.locator('a.inline-deletelink[role="button"]')
+        ).to_be_visible()
+        self.take_screenshot("loaded")
+
+    @playwright_screenshot_cases(
+        ["desktop_size", "mobile_size", "rtl", "dark", "high_contrast"]
+    )
+    def test_tabular_inline_object_with_show_change_link(self):
+        et = ExtraTerrestrial.objects.create(name="test")
+        Sighting.objects.create(et=et, place="Desert")
+        self.admin_login(username="super", password="secret")
+        url = reverse("admin:admin_inlines_extraterrestrial_change", args=(et.pk,))
+        self.page.goto(self.live_server_url + url)
+        object_str = self.page.locator("fieldset.module tbody tr td.original p")
+        self.expect(object_str).to_be_visible()
+        self.expect(object_str).to_contain_text("Desert")
+        self.take_screenshot("tabular")
+
+    @playwright_screenshot_cases(
+        ["desktop_size", "mobile_size", "rtl", "dark", "high_contrast"]
+    )
+    def test_tabular_inline_with_filter_horizontal(self):
+        self.admin_login(username="super", password="secret")
+        self.page.goto(
+            self.live_server_url + reverse("admin:admin_inlines_courseproxy2_add")
+        )
+        m2m_widget = self.page.locator("div.selector")
+        self.expect(m2m_widget).to_be_visible()
+        self.take_screenshot("tabular")
+
+    @playwright_screenshot_cases(
+        ["desktop_size", "mobile_size", "rtl", "dark", "high_contrast"]
+    )
+    def test_tabular_inline_m2m_widget_option_bg(self):
+        Person.objects.create(firstname="Lee")
+        self.admin_login(username="super", password="secret")
+        self.page.goto(
+            self.live_server_url + reverse("admin:admin_inlines_courseproxy2_add")
+        )
+        selector = self.page.locator("div.selector")
+        select = selector.locator("select").first
+        options = select.locator("option")
+        self.assertGreater(options.count(), 0)
+        select.select_option(index=0)
+        selector.locator("p.selector-filter input").first.click()
         self.take_screenshot("focus_out")

@@ -15,7 +15,7 @@ from django.contrib.admin.helpers import ACTION_CHECKBOX_NAME
 from django.contrib.admin.models import ADDITION, DELETION, LogEntry
 from django.contrib.admin.options import SOURCE_MODEL_VAR, TO_FIELD_VAR
 from django.contrib.admin.templatetags.admin_urls import add_preserved_filters
-from django.contrib.admin.tests import AdminSeleniumTestCase
+from django.contrib.admin.tests import AdminPlaywrightTestCase, AdminSeleniumTestCase
 from django.contrib.admin.utils import quote
 from django.contrib.admin.views.main import IS_POPUP_VAR
 from django.contrib.auth import REDIRECT_FIELD_NAME, get_permission_codename
@@ -36,6 +36,7 @@ from django.test import (
     override_settings,
     skipUnlessDBFeature,
 )
+from django.test.playwright import screenshot_cases as playwright_screenshot_cases
 from django.test.selenium import screenshot_cases
 from django.test.utils import override_script_prefix
 from django.urls import NoReverseMatch, resolve, reverse
@@ -44,6 +45,7 @@ from django.utils.cache import get_max_age
 from django.utils.encoding import iri_to_uri
 from django.utils.html import escape
 from django.utils.http import urlencode
+from django.utils.translation import gettext as _
 
 from . import customadmin
 from .admin import CityAdmin, site, site2
@@ -7624,6 +7626,1094 @@ class SeleniumTests(AdminSeleniumTestCase):
         for row in form_rows:
             error_list = row.find_element(By.CSS_SELECTOR, "ul.errorlist")
             self.assertTrue(error_list.is_displayed())
+        self.take_screenshot("error_list")
+
+
+@override_settings(ROOT_URLCONF="admin_views.urls")
+class PlaywrightTests(AdminPlaywrightTestCase):
+    available_apps = ["admin_views"] + AdminPlaywrightTestCase.available_apps
+
+    def setUp(self):
+        self.superuser = User.objects.create_superuser(
+            username="super", password="secret", email="super@example.com"
+        )
+        self.p1 = PrePopulatedPost.objects.create(
+            title="A Long Title", published=True, slug="a-long-title"
+        )
+
+    @playwright_screenshot_cases(
+        ["desktop_size", "mobile_size", "rtl", "dark", "high_contrast"]
+    )
+    def test_login_button_centered(self):
+
+        self.page.goto(self.live_server_url + reverse("admin:login"))
+        button = self.page.get_by_role("button", name=_("Log in"))
+
+        offset_left, offset_right = button.evaluate(
+            "el => {"
+            "  const offsetLeft = el.offsetLeft;"
+            "  const parentWidth = el.offsetParent.offsetWidth;"
+            "  const offsetRight = parentWidth - (offsetLeft + el.offsetWidth);"
+            "  return [offsetLeft, offsetRight];"
+            "}"
+        )
+        # Use assertAlmostEqual to avoid pixel rounding errors.
+        self.assertAlmostEqual(offset_left, offset_right, delta=3)
+        self.take_screenshot("login")
+
+    def test_prepopulated_fields(self):
+        """
+        The JavaScript-automated prepopulated fields work with the main form
+        and with stacked and tabular inlines.
+        Refs #13068, #9264, #9983, #9784.
+        """
+
+        self.admin_login(
+            username="super", password="secret", login_url=reverse("admin:index")
+        )
+        self.page.goto(
+            self.live_server_url + reverse("admin:admin_views_mainprepopulated_add")
+        )
+
+        # Main form ----------------------------------------------------------
+        self.page.locator("#id_pubdate").fill("2012-02-18")
+        self.page.locator("#id_pubdate").dispatch_event("keyup")
+        self.page.locator("#id_status").select_option("option two")
+        self.page.locator("#id_name").fill(" the mAin nÀMë and it's awεšomeıııİ")
+        self.page.locator("#id_name").dispatch_event("keyup")
+        self.expect(self.page.locator("#id_slug1")).to_have_value(
+            "the-main-name-and-its-awesomeiiii-2012-02-18"
+        )
+        self.expect(self.page.locator("#id_slug2")).to_have_value(
+            "option-two-the-main-name-and-its-awesomeiiii"
+        )
+        self.expect(self.page.locator("#id_slug3")).to_have_value(
+            "the-main-n\xe0m\xeb-and-its-aw\u03b5\u0161ome\u0131\u0131\u0131i"
+        )
+
+        # Stacked inlines with fieldsets -------------------------------------
+        # Initial inline
+        self.page.locator("#id_relatedprepopulated_set-0-pubdate").fill("2011-12-17")
+        self.page.locator("#id_relatedprepopulated_set-0-pubdate").dispatch_event(
+            "keyup"
+        )
+        self.page.locator("#id_relatedprepopulated_set-0-status").select_option(
+            "option one"
+        )
+        self.page.locator("#id_relatedprepopulated_set-0-name").fill(
+            " here is a sŤāÇkeð   inline !  "
+        )
+        self.page.locator("#id_relatedprepopulated_set-0-name").dispatch_event("keyup")
+        self.expect(
+            self.page.locator("#id_relatedprepopulated_set-0-slug1")
+        ).to_have_value("here-is-a-stacked-inline-2011-12-17")
+        self.expect(
+            self.page.locator("#id_relatedprepopulated_set-0-slug2")
+        ).to_have_value("option-one-here-is-a-stacked-inline")
+
+        # Select2 inputs assertions
+        # Inline formsets have empty/invisible forms.
+        # Only the 4 visible select2 inputs are initialized.
+        self.expect(self.page.locator(".select2-selection")).to_have_count(4)
+
+        # Add an inline
+        self.page.get_by_text("Add another Related prepopulated").first.click()
+        self.expect(self.page.locator(".select2-selection")).to_have_count(6)
+
+        self.page.locator("#id_relatedprepopulated_set-1-pubdate").fill("1999-01-25")
+        self.page.locator("#id_relatedprepopulated_set-1-pubdate").dispatch_event(
+            "keyup"
+        )
+        self.page.locator("#id_relatedprepopulated_set-1-status").select_option(
+            "option two"
+        )
+        self.page.locator("#id_relatedprepopulated_set-1-name").fill(
+            " now you haVe anöther   sŤāÇkeð  inline with a very ... "
+            "loooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooog "
+            "text... "
+        )
+        self.page.locator("#id_relatedprepopulated_set-1-name").dispatch_event("keyup")
+        # 50 characters maximum for slug1 field
+        self.expect(
+            self.page.locator("#id_relatedprepopulated_set-1-slug1")
+        ).to_have_value("now-you-have-another-stacked-inline-with-a-very-lo")
+        # 60 characters maximum for slug2 field
+        self.expect(
+            self.page.locator("#id_relatedprepopulated_set-1-slug2")
+        ).to_have_value("option-two-now-you-have-another-stacked-inline-with-a-very-l")
+
+        # Tabular inlines ----------------------------------------------------
+        # Initial inline
+        self.page.locator("#id_relatedprepopulated_set-2-0-pubdate").fill("1234-12-07")
+        self.page.locator("#id_relatedprepopulated_set-2-0-pubdate").dispatch_event(
+            "keyup"
+        )
+        self.page.locator("#id_relatedprepopulated_set-2-0-status").select_option(
+            "option two"
+        )
+        self.page.locator("#id_relatedprepopulated_set-2-0-name").fill(
+            "And now, with a tÃbűlaŘ inline !!!"
+        )
+        self.page.locator("#id_relatedprepopulated_set-2-0-name").dispatch_event(
+            "keyup"
+        )
+
+        self.expect(
+            self.page.locator("#id_relatedprepopulated_set-2-0-slug1")
+        ).to_have_value("and-now-with-a-tabular-inline-1234-12-07")
+        self.expect(
+            self.page.locator("#id_relatedprepopulated_set-2-0-slug2")
+        ).to_have_value("option-two-and-now-with-a-tabular-inline")
+
+        # Add an inline
+        self.page.get_by_text("Add another Related prepopulated").nth(1).click()
+        self.expect(self.page.locator(".select2-selection")).to_have_count(8)
+
+        self.page.locator("#id_relatedprepopulated_set-2-1-pubdate").fill("1981-08-22")
+        self.page.locator("#id_relatedprepopulated_set-2-1-pubdate").dispatch_event(
+            "keyup"
+        )
+        self.page.locator("#id_relatedprepopulated_set-2-1-status").select_option(
+            "option one"
+        )
+        self.page.locator("#id_relatedprepopulated_set-2-1-name").fill(
+            r'tÃbűlaŘ inline with ignored ;"&*^\%$#@-/`~ characters'
+        )
+        self.page.locator("#id_relatedprepopulated_set-2-1-name").dispatch_event(
+            "keyup"
+        )
+        self.expect(
+            self.page.locator("#id_relatedprepopulated_set-2-1-slug1")
+        ).to_have_value("tabular-inline-with-ignored-characters-1981-08-22")
+        self.expect(
+            self.page.locator("#id_relatedprepopulated_set-2-1-slug2")
+        ).to_have_value("option-one-tabular-inline-with-ignored-characters")
+
+        # Add an inline without an initial inline.
+        self.page.get_by_text("Add another Related prepopulated").nth(2).click()
+        self.expect(self.page.locator(".select2-selection")).to_have_count(10)
+
+        # Stacked Inlines without fieldsets ----------------------------------
+        # Initial inline.
+        row_id = "#id_relatedprepopulated_set-4-0-"
+        self.page.locator(f"{row_id}pubdate").fill("2011-12-12")
+        self.page.locator(f"{row_id}pubdate").dispatch_event("keyup")
+        self.page.locator(f"{row_id}status").select_option("option one")
+        self.page.locator(f"{row_id}name").fill(" sŤāÇkeð  inline !  ")
+        self.page.locator(f"{row_id}name").dispatch_event("keyup")
+        self.expect(self.page.locator(f"{row_id}slug1")).to_have_value(
+            "stacked-inline-2011-12-12"
+        )
+        self.expect(self.page.locator(f"{row_id}slug2")).to_have_value("option-one")
+
+        # Add inline.
+        self.page.get_by_text("Add another Related prepopulated").nth(3).click()
+        row_id = "#id_relatedprepopulated_set-4-1-"
+        self.page.locator(f"{row_id}pubdate").fill("1999-01-20")
+        self.page.locator(f"{row_id}pubdate").dispatch_event("keyup")
+        self.page.locator(f"{row_id}status").select_option("option two")
+        self.page.locator(f"{row_id}name").fill(
+            " now you haVe anöther   sŤāÇkeð  inline with a very loooong "
+        )
+        self.page.locator(f"{row_id}name").dispatch_event("keyup")
+        self.expect(self.page.locator(f"{row_id}slug1")).to_have_value(
+            "now-you-have-another-stacked-inline-with-a-very-lo"
+        )
+        self.expect(self.page.locator(f"{row_id}slug2")).to_have_value("option-two")
+
+        # Save and check that everything is properly stored in the database
+        self.page.locator('input[value="Save"]').click()
+        self.page.wait_for_url("**/admin/admin_views/mainprepopulated/")
+        self.assertEqual(MainPrepopulated.objects.count(), 1)
+        MainPrepopulated.objects.get(
+            name=" the mAin nÀMë and it's awεšomeıııİ",
+            pubdate="2012-02-18",
+            status="option two",
+            slug1="the-main-name-and-its-awesomeiiii-2012-02-18",
+            slug2="option-two-the-main-name-and-its-awesomeiiii",
+            slug3="the-main-nàmë-and-its-awεšomeıııi",
+        )
+        self.assertEqual(RelatedPrepopulated.objects.count(), 6)
+        RelatedPrepopulated.objects.get(
+            name=" here is a sŤāÇkeð   inline !  ",
+            pubdate="2011-12-17",
+            status="option one",
+            slug1="here-is-a-stacked-inline-2011-12-17",
+            slug2="option-one-here-is-a-stacked-inline",
+        )
+        RelatedPrepopulated.objects.get(
+            # 75 characters in name field
+            name=(
+                " now you haVe anöther   sŤāÇkeð  inline with a very ... "
+                "loooooooooooooooooo"
+            ),
+            pubdate="1999-01-25",
+            status="option two",
+            slug1="now-you-have-another-stacked-inline-with-a-very-lo",
+            slug2="option-two-now-you-have-another-stacked-inline-with-a-very-l",
+        )
+        RelatedPrepopulated.objects.get(
+            name="And now, with a tÃbűlaŘ inline !!!",
+            pubdate="1234-12-07",
+            status="option two",
+            slug1="and-now-with-a-tabular-inline-1234-12-07",
+            slug2="option-two-and-now-with-a-tabular-inline",
+        )
+        RelatedPrepopulated.objects.get(
+            name=r'tÃbűlaŘ inline with ignored ;"&*^\%$#@-/`~ characters',
+            pubdate="1981-08-22",
+            status="option one",
+            slug1="tabular-inline-with-ignored-characters-1981-08-22",
+            slug2="option-one-tabular-inline-with-ignored-characters",
+        )
+
+    def test_populate_existing_object(self):
+        """
+        The prepopulation works for existing objects too, as long as
+        the original field is empty (#19082).
+        """
+        # Slugs are empty to start with.
+        item = MainPrepopulated.objects.create(
+            name=" this is the mAin nÀMë",
+            pubdate="2012-02-18",
+            status="option two",
+            slug1="",
+            slug2="",
+        )
+        self.admin_login(
+            username="super", password="secret", login_url=reverse("admin:index")
+        )
+
+        object_url = self.live_server_url + reverse(
+            "admin:admin_views_mainprepopulated_change", args=(item.id,)
+        )
+
+        self.page.goto(object_url)
+        self.page.locator("#id_name").fill(item.name + " the best")
+        self.page.locator("#id_name").dispatch_event("keyup")
+
+        # The slugs got prepopulated since they were originally empty
+        self.expect(self.page.locator("#id_slug1")).to_have_value(
+            "this-is-the-main-name-the-best-2012-02-18"
+        )
+        self.expect(self.page.locator("#id_slug2")).to_have_value(
+            "option-two-this-is-the-main-name-the-best"
+        )
+
+        # Save the object
+        self.page.locator('input[value="Save"]').click()
+        self.page.wait_for_url("**/admin/admin_views/mainprepopulated/")
+
+        self.page.goto(object_url)
+        self.page.locator("#id_name").fill(item.name + " the best hello")
+
+        # The slugs got prepopulated didn't change since they were originally
+        # not empty
+        self.expect(self.page.locator("#id_slug1")).to_have_value(
+            "this-is-the-main-name-the-best-2012-02-18"
+        )
+        self.expect(self.page.locator("#id_slug2")).to_have_value(
+            "option-two-this-is-the-main-name-the-best"
+        )
+
+    @playwright_screenshot_cases(
+        ["desktop_size", "mobile_size", "dark", "high_contrast"]
+    )
+    def test_collapsible_fieldset(self):
+        """
+        The 'collapse' class in fieldsets definition allows to
+        show/hide the appropriate field section.
+        """
+        self.admin_login(
+            username="super", password="secret", login_url=reverse("admin:index")
+        )
+        self.page.goto(self.live_server_url + reverse("admin:admin_views_article_add"))
+        self.expect(self.page.locator("#id_title")).not_to_be_visible()
+        self.take_screenshot("collapsed")
+        self.page.locator("summary").first.click()
+        self.expect(self.page.locator("#id_title")).to_be_visible()
+        self.take_screenshot("expanded")
+
+    # @playwright_screenshot_cases
+    # def test_selectbox_height_collapsible_fieldset(self):
+
+    # @playwright_screenshot_cases
+    # def test_selectbox_height_not_collapsible_fieldset(self):
+
+    @playwright_screenshot_cases(
+        ["desktop_size", "mobile_size", "rtl", "dark", "high_contrast"]
+    )
+    def test_selectbox_selected_rows(self):
+        self.admin_login(
+            username="super", password="secret", login_url=reverse("admin:index")
+        )
+        # Create a new user to ensure that no extra permissions have been set.
+        user = User.objects.create_user(username="new", password="newuser")
+        url = self.live_server_url + reverse("admin:auth_user_change", args=[user.id])
+        self.page.goto(url)
+
+        # Select multiple permissions from the "Available" list.
+        ct = ContentType.objects.get_for_model(Permission)
+        perms = list(Permission.objects.filter(content_type=ct))
+
+        self.take_screenshot("selectbox-available-perms-none-selected")
+
+        self.page.locator("#id_user_permissions_from").select_option(
+            value=[str(perm.id) for perm in perms]
+        )
+
+        self.take_screenshot("selectbox-available-perms-some-selected")
+
+        # Move focus to other element.
+        self.page.locator("#id_user_permissions_input").click()
+
+        # Move permissions to the "Chosen" list, but none is selected yet.
+        self.page.locator("#id_user_permissions_add").click()
+
+        self.take_screenshot("selectbox-chosen-perms-none-selected")
+
+        # Select some permissions from the "Chosen" list.
+        self.page.locator("#id_user_permissions_to").select_option(
+            value=[str(perms[0].id), str(perms[-1].id)]
+        )
+
+        # Move focus to other element.
+        self.page.keyboard.press("Tab")
+
+        self.take_screenshot("selectbox-chosen-perms-some-selected")
+
+    @playwright_screenshot_cases(
+        ["desktop_size", "mobile_size", "rtl", "dark", "high_contrast"]
+    )
+    def test_first_field_focus(self):
+        """JavaScript-assisted auto-focus on first usable form field."""
+        # First form field has a single widget
+        self.admin_login(
+            username="super", password="secret", login_url=reverse("admin:index")
+        )
+        self.page.goto(self.live_server_url + reverse("admin:admin_views_picture_add"))
+        self.expect(self.page.locator("#id_name")).to_be_focused()
+        self.take_screenshot("focus-single-widget")
+
+        # First form field has a MultiWidget
+        self.page.goto(
+            self.live_server_url + reverse("admin:admin_views_reservation_add")
+        )
+        self.expect(self.page.locator("#id_start_date_0")).to_be_focused()
+        self.take_screenshot("focus-multi-widget")
+
+    def test_cancel_delete_confirmation(self):
+        "Cancelling the deletion of an object takes the user back one page."
+        pizza = Pizza.objects.create(name="Double Cheese")
+        url = reverse("admin:admin_views_pizza_change", args=(pizza.id,))
+        full_url = self.live_server_url + url
+        self.admin_login(
+            username="super", password="secret", login_url=reverse("admin:index")
+        )
+        self.page.goto(full_url)
+        self.page.locator(".deletelink").click()
+        # Click 'cancel' on the delete page.
+        self.page.locator(".cancel-link").click()
+        # Wait until we're back on the change page.
+        self.expect(self.page.locator("#content h1")).to_have_text("Change pizza")
+        self.assertEqual(self.page.url, full_url)
+        self.assertEqual(Pizza.objects.count(), 1)
+
+    def test_cancel_delete_related_confirmation(self):
+        """
+        Cancelling the deletion of an object with relations takes the user back
+        one page.
+        """
+        pizza = Pizza.objects.create(name="Double Cheese")
+        topping1 = Topping.objects.create(name="Cheddar")
+        topping2 = Topping.objects.create(name="Mozzarella")
+        pizza.toppings.add(topping1, topping2)
+        url = reverse("admin:admin_views_pizza_change", args=(pizza.id,))
+        full_url = self.live_server_url + url
+        self.admin_login(
+            username="super", password="secret", login_url=reverse("admin:index")
+        )
+        self.page.goto(full_url)
+        self.page.locator(".deletelink").click()
+        # Click 'cancel' on the delete page.
+        self.page.locator(".cancel-link").click()
+        # Wait until we're back on the change page.
+        self.expect(self.page.locator("#content h1")).to_have_text("Change pizza")
+        self.assertEqual(self.page.url, full_url)
+        self.assertEqual(Pizza.objects.count(), 1)
+        self.assertEqual(Topping.objects.count(), 2)
+
+    def test_list_editable_popups(self):
+        """
+        list_editable foreign keys have add/change popups.
+        """
+        s1 = Section.objects.create(name="Test section")
+        Article.objects.create(
+            title="foo",
+            content="<p>Middle content</p>",
+            date=datetime.datetime(2008, 3, 18, 11, 54, 58),
+            section=s1,
+        )
+        self.admin_login(
+            username="super", password="secret", login_url=reverse("admin:index")
+        )
+        self.page.goto(
+            self.live_server_url + reverse("admin:admin_views_article_changelist")
+        )
+        # Change popup
+        with self.page.expect_popup() as popup_info:
+            self.page.locator("#change_id_form-0-section").click()
+        popup = popup_info.value
+        self.expect(popup.locator("#content h1")).to_have_text("Change section")
+        popup.locator("#id_name").fill("<i>edited section</i>")
+        with popup.expect_event("close"):
+            popup.locator('input[value="Save"]').click()
+        # Hide sidebar.
+        self.page.locator("#toggle-nav-sidebar").click()
+        selected_option = self.page.locator("#id_form-0-section option:checked")
+        self.expect(selected_option).to_have_text("<i>edited section</i>")
+        # Rendered select2 input.
+        select2_display = self.page.locator(".select2-selection__rendered")
+        # Clear button (×) is included in text.
+        self.expect(select2_display).to_contain_text("<i>edited section</i>")
+
+        # Add popup
+        with self.page.expect_popup() as popup_info:
+            self.page.locator("#add_id_form-0-section").click()
+        popup = popup_info.value
+        self.expect(popup.locator("#content h1")).to_have_text("Add section")
+        popup.locator("#id_name").fill("new section")
+        with popup.expect_event("close"):
+            popup.locator('input[value="Save"]').click()
+        selected_option = self.page.locator("#id_form-0-section option:checked")
+        self.expect(selected_option).to_have_text("new section")
+        select2_display = self.page.locator(".select2-selection__rendered")
+        # Clear button (×) is included in text.
+        self.expect(select2_display).to_contain_text("new section")
+
+    def test_inline_uuid_pk_edit_with_popup(self):
+        parent = ParentWithUUIDPK.objects.create(title="test")
+        related_with_parent = RelatedWithUUIDPKModel.objects.create(parent=parent)
+        self.admin_login(
+            username="super", password="secret", login_url=reverse("admin:index")
+        )
+        change_url = reverse(
+            "admin:admin_views_relatedwithuuidpkmodel_change",
+            args=(related_with_parent.id,),
+        )
+        self.page.goto(self.live_server_url + change_url)
+        with self.page.expect_popup() as popup_info:
+            self.page.locator("#change_id_parent").click()
+        popup = popup_info.value
+        with popup.expect_event("close"):
+            popup.locator('input[value="Save"]').click()
+        selected_option = self.page.locator("#id_parent option:checked")
+        self.assertEqual(selected_option.inner_text(), str(parent.id))
+        self.assertEqual(selected_option.get_attribute("value"), str(parent.id))
+
+    def test_inline_uuid_pk_add_with_popup(self):
+        self.admin_login(
+            username="super", password="secret", login_url=reverse("admin:index")
+        )
+        self.page.goto(
+            self.live_server_url
+            + reverse("admin:admin_views_relatedwithuuidpkmodel_add")
+        )
+        with self.page.expect_popup() as popup_info:
+            self.page.locator("#add_id_parent").click()
+        popup = popup_info.value
+        popup.locator("#id_title").fill("test")
+        with popup.expect_event("close"):
+            popup.locator('input[value="Save"]').click()
+        uuid_id = str(ParentWithUUIDPK.objects.first().id)
+        selected_option = self.page.locator("#id_parent option:checked")
+        self.assertEqual(selected_option.inner_text(), uuid_id)
+        self.assertEqual(selected_option.get_attribute("value"), uuid_id)
+
+    def test_inline_uuid_pk_delete_with_popup(self):
+        parent = ParentWithUUIDPK.objects.create(title="test")
+        related_with_parent = RelatedWithUUIDPKModel.objects.create(parent=parent)
+        self.admin_login(
+            username="super", password="secret", login_url=reverse("admin:index")
+        )
+        change_url = reverse(
+            "admin:admin_views_relatedwithuuidpkmodel_change",
+            args=(related_with_parent.id,),
+        )
+        self.page.goto(self.live_server_url + change_url)
+        with self.page.expect_popup() as popup_info:
+            self.page.locator("#delete_id_parent").click()
+        popup = popup_info.value
+        with popup.expect_event("close"):
+            popup.locator('input[value="Yes, I’m sure"]').click()
+        selected_option = self.page.locator("#id_parent option:checked")
+        self.assertEqual(ParentWithUUIDPK.objects.count(), 0)
+        self.assertEqual(selected_option.inner_text(), get_blank_choice_label())
+        self.assertEqual(selected_option.get_attribute("value"), "")
+
+    def test_inline_with_popup_cancel_delete(self):
+        """Clicking "No, take me back" on a delete popup closes the window."""
+        parent = ParentWithUUIDPK.objects.create(title="test")
+        related_with_parent = RelatedWithUUIDPKModel.objects.create(parent=parent)
+        self.admin_login(
+            username="super", password="secret", login_url=reverse("admin:index")
+        )
+        change_url = reverse(
+            "admin:admin_views_relatedwithuuidpkmodel_change",
+            args=(related_with_parent.id,),
+        )
+        self.page.goto(self.live_server_url + change_url)
+        with self.page.expect_popup() as popup_info:
+            self.page.locator("#delete_id_parent").click()
+        popup = popup_info.value
+        with popup.expect_event("close"):
+            popup.get_by_text("No, take me back").evaluate(
+                "el => setTimeout(() => el.click())"
+            )
+        # After the popup closes, only the main page should remain.
+        self.assertEqual(len(self.page.context.pages), 1)
+
+    def test_list_editable_raw_id_fields(self):
+        parent = ParentWithUUIDPK.objects.create(title="test")
+        parent2 = ParentWithUUIDPK.objects.create(title="test2")
+        RelatedWithUUIDPKModel.objects.create(parent=parent)
+        self.admin_login(
+            username="super", password="secret", login_url=reverse("admin:index")
+        )
+        change_url = reverse(
+            "admin:admin_views_relatedwithuuidpkmodel_changelist",
+            current_app=site2.name,
+        )
+        self.page.goto(self.live_server_url + change_url)
+        with self.page.expect_popup() as popup_info:
+            self.page.locator("#lookup_id_form-0-parent").click()
+        popup = popup_info.value
+        # Select "parent2" in the popup.
+        with popup.expect_event("close"):
+            popup.get_by_role("link", name=str(parent2.pk)).evaluate(
+                "el => setTimeout(() => el.click())"
+            )
+        # The newly selected pk should appear in the raw id input.
+        self.expect(self.page.locator("#id_form-0-parent")).to_have_value(
+            str(parent2.pk)
+        )
+
+    def test_input_element_font(self):
+        """
+        Browsers' default stylesheets override the font of inputs. The admin
+        adds additional CSS to handle this.
+        """
+        self.page.goto(self.live_server_url + reverse("admin:login"))
+        element = self.page.locator("#id_username")
+        # Evaluate computed font-family in the browser.
+        font_family = element.evaluate("el => window.getComputedStyle(el).fontFamily")
+        # Some browsers quote the font names, some don't.
+        fonts = [font.strip().strip('"') for font in font_family.split(",")]
+        self.assertEqual(
+            fonts,
+            [
+                "Segoe UI",
+                "system-ui",
+                "Roboto",
+                "Helvetica Neue",
+                "Arial",
+                "sans-serif",
+                "Apple Color Emoji",
+                "Segoe UI Emoji",
+                "Segoe UI Symbol",
+                "Noto Color Emoji",
+            ],
+        )
+
+    def test_search_input_filtered_page(self):
+        Person.objects.create(name="Guido van Rossum", gender=1, alive=True)
+        Person.objects.create(name="Grace Hopper", gender=1, alive=False)
+        self.admin_login(
+            username="super", password="secret", login_url=reverse("admin:index")
+        )
+        person_url = reverse("admin:admin_views_person_changelist") + "?q=Gui"
+        self.page.goto(self.live_server_url + person_url)
+        # Hide sidebar.
+        self.page.locator("#toggle-nav-sidebar").click()
+        searchbar = self.page.locator("#searchbar")
+        width = searchbar.evaluate("el => el.getBoundingClientRect().width")
+        self.assertGreater(width, 50)
+
+    def test_related_popup_index(self):
+        """
+        Create a chain of 'self' related objects via popups.
+        """
+        self.admin_login(
+            username="super", password="secret", login_url=reverse("admin:index")
+        )
+        add_url = reverse("admin:admin_views_box_add", current_app=site.name)
+        self.page.goto(self.live_server_url + add_url)
+
+        # Open first popup from the base page.
+        with self.page.expect_popup() as popup1_info:
+            self.page.locator("#add_id_next_box").click()
+        popup_test = popup1_info.value
+        popup_test.locator("#id_title").fill("test")
+
+        # Open second popup from the first popup.
+        with popup_test.expect_popup() as popup2_info:
+            popup_test.locator("#add_id_next_box").click()
+        popup_test2 = popup2_info.value
+        popup_test2.locator("#id_title").fill("test2")
+
+        # Open third popup from the second popup.
+        with popup_test2.expect_popup() as popup3_info:
+            popup_test2.locator("#add_id_next_box").click()
+        popup_test3 = popup3_info.value
+        popup_test3.locator("#id_title").fill("test3")
+
+        # Save in the deepest popup — it closes itself.
+        with popup_test3.expect_event("close"):
+            popup_test3.locator('input[value="Save"]').click()
+        # After popup_test3 closes, popup_test2 should have "test3" selected.
+        next_box_id = str(Box.objects.get(title="test3").id)
+        self.expect(
+            popup_test2.locator("#id_next_box option:checked")
+        ).to_have_attribute("value", next_box_id)
+
+        # Save popup_test2 — it closes itself.
+        with popup_test2.expect_event("close"):
+            popup_test2.locator('input[value="Save"]').click()
+        # After popup_test2 closes, popup_test should have "test2" selected.
+        next_box_id = str(Box.objects.get(title="test2").id)
+        self.expect(
+            popup_test.locator("#id_next_box option:checked")
+        ).to_have_attribute("value", next_box_id)
+
+        # Save popup_test — it closes itself.
+        with popup_test.expect_event("close"):
+            popup_test.locator('input[value="Save"]').click()
+        # After popup_test closes, base page should have "test" selected.
+        next_box_id = str(Box.objects.get(title="test").id)
+        self.expect(self.page.locator("#id_next_box option:checked")).to_have_attribute(
+            "value", next_box_id
+        )
+
+    def test_related_popup_incorrect_close(self):
+        """
+        Cleanup child popups when closing a parent popup.
+        """
+        self.admin_login(
+            username="super", password="secret", login_url=reverse("admin:index")
+        )
+        add_url = reverse("admin:admin_views_box_add", current_app=site.name)
+        self.page.goto(self.live_server_url + add_url)
+
+        with self.page.expect_popup() as popup1_info:
+            self.page.locator("#add_id_next_box").click()
+        test_popup = popup1_info.value
+        test_popup.locator("#id_title").fill("test")
+
+        with test_popup.expect_popup() as popup2_info:
+            test_popup.locator("#add_id_next_box").click()
+        test2_popup = popup2_info.value
+        test2_popup.locator("#id_title").fill("test2")
+
+        with test2_popup.expect_popup() as popup3_info:
+            test2_popup.locator("#add_id_next_box").click()
+        popup3_info.value  # wait for the third popup to open
+        self.assertEqual(len(self.page.context.pages), 4)
+
+        # Save test2_popup — should close test2_popup and its child (popup3).
+        with test2_popup.expect_event("close"):
+            test2_popup.locator('input[value="Save"]').click()
+        # Wait for child popup cleanup.
+        self.page.wait_for_timeout(500)
+        self.assertEqual(len(self.page.context.pages), 2)
+
+        # Close final popup to clean up test.
+        with test_popup.expect_event("close"):
+            test_popup.locator('input[value="Save"]').click()
+
+    def test_hidden_fields_small_window(self):
+        self.admin_login(
+            username="super",
+            password="secret",
+            login_url=reverse("admin:index"),
+        )
+        self.page.goto(self.live_server_url + reverse("admin:admin_views_story_add"))
+        field_title = self.page.locator(".field-title")
+        with self.small_screen_size():
+            self.expect(field_title).not_to_be_visible()
+        with self.mobile_size():
+            self.expect(field_title).not_to_be_visible()
+
+    def test_updating_related_objects_updates_fk_selects_except_autocompletes(self):
+        born_country_select_id = "id_born_country"
+        living_country_select_id = "id_living_country"
+        living_country_select2_textbox_id = "select2-id_living_country-container"
+        favorite_country_to_vacation_select_id = "id_favorite_country_to_vacation"
+        continent_select_id = "id_continent"
+
+        self.admin_login(
+            username="super", password="secret", login_url=reverse("admin:index")
+        )
+        add_url = reverse("admin:admin_views_traveler_add")
+        self.page.goto(self.live_server_url + add_url)
+
+        # Add new Country from the born_country select.
+        with self.page.expect_popup() as popup_info:
+            self.page.locator(f"#add_{born_country_select_id}").click()
+        popup = popup_info.value
+        popup.locator("#id_name").fill("Argentina")
+        popup.locator(f"#{continent_select_id}").select_option(label="South America")
+        with popup.expect_event("close"):
+            popup.locator('[type="submit"]').click()
+
+        argentina = Country.objects.get(name="Argentina")
+        self.assertHTMLEqual(
+            self.page.locator(f"#{born_country_select_id}").inner_html(),
+            f"""
+            <option value="" selected="">- Select an option -</option>
+            <option value="{argentina.pk}" selected="">Argentina</option>
+            """,
+        )
+        # Argentina isn't added to the living_country select nor selected by
+        # the select2 widget.
+        self.assertEqual(
+            self.page.locator(f"#{living_country_select_id}").inner_text(),
+            "",
+        )
+        self.assertEqual(
+            self.page.locator(f"#{living_country_select2_textbox_id}").inner_text(),
+            "",
+        )
+        # Argentina won't appear because favorite_country_to_vacation field has
+        # limit_choices_to.
+        self.assertHTMLEqual(
+            self.page.locator(
+                f"#{favorite_country_to_vacation_select_id}"
+            ).inner_html(),
+            '<option value="" selected="">- Select an option -</option>',
+        )
+
+        # Add new Country from the living_country select.
+        with self.page.expect_popup() as popup_info:
+            self.page.locator(f"#add_{living_country_select_id}").click()
+        popup = popup_info.value
+        popup.locator("#id_name").fill("Spain")
+        popup.locator(f"#{continent_select_id}").select_option(label="Europe")
+        with popup.expect_event("close"):
+            popup.locator('[type="submit"]').click()
+
+        spain = Country.objects.get(name="Spain")
+        self.assertHTMLEqual(
+            self.page.locator(f"#{born_country_select_id}").inner_html(),
+            f"""
+            <option value="" selected="">- Select an option -</option>
+            <option value="{argentina.pk}" selected="">Argentina</option>
+            <option value="{spain.pk}">Spain</option>
+            """,
+        )
+        # Spain is added to the living_country select and it's also selected by
+        # the select2 widget.
+        self.assertEqual(
+            self.page.locator(f"#{living_country_select_id} option").inner_text(),
+            "Spain",
+        )
+        self.assertEqual(
+            self.page.locator(f"#{living_country_select2_textbox_id}").inner_text(),
+            "Spain",
+        )
+        # Spain won't appear because favorite_country_to_vacation field has
+        # limit_choices_to.
+        self.assertHTMLEqual(
+            self.page.locator(
+                f"#{favorite_country_to_vacation_select_id}"
+            ).inner_html(),
+            '<option value="" selected="">- Select an option -</option>',
+        )
+
+        # Edit second Country created from living_country select.
+        self.page.locator(f"#{living_country_select_id}").select_option(label="Spain")
+        with self.page.expect_popup() as popup_info:
+            self.page.locator(f"#change_{living_country_select_id}").click()
+        popup = popup_info.value
+        popup.locator("#id_name").fill("Italy")
+        with popup.expect_event("close"):
+            popup.locator('[type="submit"]').click()
+
+        italy = spain
+        self.assertHTMLEqual(
+            self.page.locator(f"#{born_country_select_id}").inner_html(),
+            f"""
+            <option value="" selected="">- Select an option -</option>
+            <option value="{argentina.pk}" selected="">Argentina</option>
+            <option value="{italy.pk}">Italy</option>
+            """,
+        )
+        # Italy is added to the living_country select and it's also selected by
+        # the select2 widget.
+        self.assertEqual(
+            self.page.locator(f"#{living_country_select_id} option").inner_text(),
+            "Italy",
+        )
+        self.assertEqual(
+            self.page.locator(f"#{living_country_select2_textbox_id}").inner_text(),
+            "Italy",
+        )
+        # favorite_country_to_vacation field has no options.
+        self.assertHTMLEqual(
+            self.page.locator(
+                f"#{favorite_country_to_vacation_select_id}"
+            ).inner_html(),
+            '<option value="" selected="">- Select an option -</option>',
+        )
+
+        # Add a new Asian country.
+        with self.page.expect_popup() as popup_info:
+            self.page.locator(f"#add_{favorite_country_to_vacation_select_id}").click()
+        popup = popup_info.value
+        popup.locator("#id_name").fill("Qatar")
+        popup.locator(f"#{continent_select_id}").select_option(label="Asia")
+        with popup.expect_event("close"):
+            popup.locator('[type="submit"]').click()
+
+        # Submit the new Traveler.
+        self.page.locator('[name="_save"]').click()
+        self.page.wait_for_load_state("load")
+        traveler = Traveler.objects.get()
+        self.assertEqual(traveler.born_country.name, "Argentina")
+        self.assertEqual(traveler.living_country.name, "Italy")
+        self.assertEqual(traveler.favorite_country_to_vacation.name, "Qatar")
+
+    def test_redirect_on_add_view_add_another_button(self):
+        self.admin_login(
+            username="super", password="secret", login_url=reverse("admin:index")
+        )
+        add_url = reverse("admin7:admin_views_section_add")
+        self.page.goto(self.live_server_url + add_url)
+        success_message = self.page.locator("ul.messagelist li.success")
+        self.page.locator("#id_name").fill("Test section 1")
+        self.page.locator('input[value="Save and add another"]').click()
+        # Success message, then redirect to the add form.
+        self.expect(success_message).to_contain_text(
+            "The section “Test section 1” was added successfully. You may add another "
+            "section below."
+        )
+        self.assertEqual(Section.objects.count(), 1)
+        self.page.locator("#id_name").fill("Test section 2")
+        self.page.locator('input[value="Save and add another"]').click()
+        self.expect(success_message).to_contain_text(
+            "The section “Test section 2” was added successfully. You may add another "
+            "section below."
+        )
+        self.assertEqual(Section.objects.count(), 2)
+
+    def test_redirect_on_add_view_continue_button(self):
+        self.admin_login(
+            username="super", password="secret", login_url=reverse("admin:index")
+        )
+        add_url = reverse("admin7:admin_views_section_add")
+        self.page.goto(self.live_server_url + add_url)
+        self.page.locator("#id_name").fill("Test section 1")
+        self.page.locator('input[value="Save and continue editing"]').click()
+        # Success message, then redirect to the change form.
+        self.expect(self.page.locator("ul.messagelist li.success")).to_contain_text(
+            "The section “Test section 1” was added successfully. You may edit it "
+            "again below."
+        )
+        self.assertEqual(Section.objects.count(), 1)
+        self.expect(self.page.locator("#id_name")).to_have_value("Test section 1")
+
+    def test_use_fieldset_fields_render(self):
+        self.admin_login(
+            username="super", password="secret", login_url=reverse("admin:index")
+        )
+        course = Course.objects.create(
+            title="Django Class", materials="django_documents"
+        )
+        expected_legend_tags_text = [
+            "Difficulty:",
+            "Materials:",
+            "Start datetime:",
+        ]
+        url = reverse("admin:admin_views_course_change", args=(course.pk,))
+        self.page.goto(self.live_server_url + url)
+        fieldsets = self.page.locator("fieldset.aligned fieldset")
+        self.expect(fieldsets).to_have_count(len(expected_legend_tags_text))
+        for index, text in enumerate(expected_legend_tags_text):
+            legend = fieldsets.nth(index).locator("legend")
+            self.expect(legend).to_have_text(text)
+
+        # FilteredSelectMultiple uses <fieldset>.
+        url = reverse("admin:admin_views_camelcaserelatedmodel_add")
+        self.page.goto(self.live_server_url + url)
+        fieldsets = self.page.locator("fieldset.aligned fieldset")
+        self.expect(fieldsets).to_have_count(1)
+        legend = fieldsets.first.locator("legend")
+        self.expect(legend).to_have_text("M2m:")
+
+    @playwright_screenshot_cases(
+        ["desktop_size", "mobile_size", "rtl", "dark", "high_contrast"]
+    )
+    def test_use_fieldset_with_grouped_fields(self):
+        self.admin_login(
+            username="super", password="secret", login_url=reverse("admin:index")
+        )
+        self.page.goto(self.live_server_url + reverse("admin:admin_views_course_add"))
+        multiline = self.page.locator(
+            "#content-main .field-difficulty, .form-multiline"
+        ).first
+        # Two field boxes.
+        child_count = multiline.evaluate("el => el.children.length")
+        self.assertEqual(child_count, 2)
+        # One of them is under a <fieldset>.
+        under_fieldset = multiline.locator("fieldset")
+        self.expect(under_fieldset).to_have_count(1)
+        self.take_screenshot("horizontal_fieldset")
+
+    @playwright_screenshot_cases(
+        ["desktop_size", "mobile_size", "rtl", "dark", "high_contrast"]
+    )
+    @override_settings(MESSAGE_LEVEL=10)
+    def test_messages(self):
+        with override_settings(MESSAGE_LEVEL=10):
+            self.admin_login(
+                username="super",
+                password="secret",
+                login_url=reverse("admin:index"),
+            )
+            UserMessenger.objects.create()
+            for level in ["warning", "info", "error", "success", "debug"]:
+                self.page.goto(
+                    self.live_server_url
+                    + reverse("admin:admin_views_usermessenger_changelist"),
+                )
+                self.page.locator("tr input.action-select").click()
+                self.page.locator('[name="action"]').select_option(
+                    value=f"message_{level}"
+                )
+                self.page.locator('button[name="index"]').click()
+                message = self.page.locator("ul.messagelist li")
+                self.expect(message.first).to_have_text(f"Test {level}")
+                self.take_screenshot(level)
+
+    @playwright_screenshot_cases(
+        ["desktop_size", "mobile_size", "rtl", "dark", "high_contrast"]
+    )
+    def test_list_editable_with_filter(self):
+        Person.objects.create(name="Tom", gender=1)
+        self.admin_login(
+            username="super", password="secret", login_url=reverse("admin:index")
+        )
+        self.page.goto(
+            self.live_server_url + reverse("admin:admin_views_person_changelist")
+        )
+        save_button = self.page.locator('[name="_save"]')
+        self.expect(save_button).to_be_visible()
+        self.take_screenshot("list_editable")
+        save_button.click()
+
+    @playwright_screenshot_cases(
+        ["desktop_size", "mobile_size", "rtl", "dark", "high_contrast"]
+    )
+    def test_object_tools(self):
+        state = State.objects.create(name="Korea")
+        city = City.objects.create(state=state, name="Gwangju")
+        self.admin_login(
+            username="super", password="secret", login_url=reverse("admin:index")
+        )
+        self.page.goto(
+            self.live_server_url + reverse("admin:admin_views_city_changelist")
+        )
+        object_tools = self.page.locator("ul.object-tools li a")
+        self.expect(object_tools).to_have_count(1)
+        self.take_screenshot("changelist")
+
+        self.page.goto(
+            self.live_server_url
+            + reverse("admin:admin_views_city_change", args=(city.pk,))
+        )
+        object_tools = self.page.locator("ul.object-tools li a")
+        self.expect(object_tools).to_have_count(2)
+        self.take_screenshot("changeform")
+
+    @playwright_screenshot_cases(
+        ["desktop_size", "mobile_size", "rtl", "dark", "high_contrast"]
+    )
+    def test_long_header_with_object_tools_layout(self):
+        self.admin_login(
+            username="super", password="secret", login_url=reverse("admin:index")
+        )
+        s = Subscriber.objects.create(name="a " * 40, email="b " * 80)
+        self.page.goto(
+            self.live_server_url
+            + reverse("admin:admin_views_subscriber_change", args=(s.pk,))
+        )
+        header = self.page.locator("div#content h2")
+        header_text = header.text_content()
+        self.assertGreater(len(header_text), 100)
+        object_tools = self.page.locator("div#content ul.object-tools li")
+        self.assertGreater(object_tools.count(), 0)
+        self.take_screenshot("change_form")
+
+        self.page.goto(
+            self.live_server_url + reverse("admin:admin_views_restaurant_changelist")
+        )
+        header = self.page.locator("div#content h1")
+        header_text = header.text_content()
+        self.assertGreater(len(header_text), 100)
+        object_tools = self.page.locator("div#content ul.object-tools li")
+        self.assertGreater(object_tools.count(), 0)
+        self.take_screenshot("change_list")
+
+    @playwright_screenshot_cases(
+        ["desktop_size", "mobile_size", "rtl", "dark", "high_contrast"]
+    )
+    def test_pagination_layout(self):
+        self.admin_login(
+            username="super", password="secret", login_url=reverse("admin:index")
+        )
+        objects = [UnorderedObject(name=f"obj-{i}") for i in range(1, 23)]
+        UnorderedObject.objects.bulk_create(objects)
+        self.page.goto(
+            self.live_server_url
+            + reverse("admin:admin_views_unorderedobject_changelist")
+        )
+        pages = self.page.locator("nav.paginator ul li")
+        self.assertGreater(pages.count(), 1)
+        show_all = self.page.locator("a.showall")
+        self.expect(show_all).to_be_visible()
+        self.take_screenshot("pagination")
+
+    @playwright_screenshot_cases(
+        ["desktop_size", "mobile_size", "rtl", "dark", "high_contrast"]
+    )
+    def test_changelist_filter_sidebar_with_long_verbose_fields(self):
+        self.admin_login(
+            username="super", password="secret", login_url=reverse("admin:index")
+        )
+        Person.objects.create(name="John", gender=1)
+        self.page.goto(
+            self.live_server_url + reverse("admin:admin_views_person_changelist")
+        )
+        changelist_filter = self.page.locator("#changelist-filter")
+        self.expect(changelist_filter).to_be_visible()
+        self.take_screenshot("filter_sidebar")
+
+    @playwright_screenshot_cases(
+        ["desktop_size", "mobile_size", "rtl", "dark", "high_contrast"]
+    )
+    def test_form_errors_render_layout(self):
+        self.admin_login(
+            username="super", password="secret", login_url=reverse("admin:index")
+        )
+        self.page.goto(self.live_server_url + reverse("admin:admin_views_language_add"))
+        self.page.locator('[name="_save"]').click()
+        form_rows = self.page.locator("div.form-row")
+        self.expect(form_rows.first.locator("ul.errorlist").first).to_be_visible()
+        count = form_rows.count()
+        for i in range(count):
+            error_lists = form_rows.nth(i).locator("ul.errorlist")
+            self.expect(error_lists.first).to_be_visible()
+            for j in range(error_lists.count()):
+                self.expect(error_lists.nth(j)).to_be_visible()
         self.take_screenshot("error_list")
 
 

@@ -11,6 +11,7 @@ from django.test import (
     modify_settings,
     override_settings,
 )
+from django.test.playwright import PlaywrightTestCase
 from django.test.selenium import SeleniumTestCase
 from django.urls import reverse
 from django.utils.translation import get_language, override
@@ -574,4 +575,56 @@ class I18nSeleniumTests(SeleniumTestCase):
         elem = self.selenium.find_element(By.ID, "app2string")
         self.assertEqual(
             elem.text, "il faut traduire cette chaîne de caractères de app2"
+        )
+
+
+@override_settings(ROOT_URLCONF="view_tests.urls")
+class I18nPlaywrightTests(PlaywrightTestCase):
+    # The test cases use fixtures & translations from these apps.
+    available_apps = [
+        "django.contrib.admin",
+        "django.contrib.auth",
+        "django.contrib.contenttypes",
+        "view_tests",
+    ]
+
+    @override_settings(LANGUAGE_CODE="de")
+    def test_javascript_gettext(self):
+        self.page.goto(self.live_server_url + "/jsi18n_template/")
+        self.page.wait_for_load_state("domcontentloaded")
+
+        self.assertEqual(self.page.locator("#gettext").inner_text(), "Entfernen")
+        self.assertEqual(self.page.locator("#ngettext_sing").inner_text(), "1 Element")
+        self.assertEqual(
+            self.page.locator("#ngettext_plur").inner_text(), "455 Elemente"
+        )
+        self.assertEqual(
+            self.page.locator("#ngettext_onnonplural").inner_text(), "Bild"
+        )
+        self.assertEqual(self.page.locator("#pgettext").inner_text(), "Kann")
+        self.assertEqual(
+            self.page.locator("#npgettext_sing").inner_text(), "1 Resultat"
+        )
+        self.assertEqual(
+            self.page.locator("#npgettext_plur").inner_text(), "455 Resultate"
+        )
+        self.assertEqual(
+            self.page.locator("#formats").inner_text(),
+            "DATE_INPUT_FORMATS is an object; DECIMAL_SEPARATOR is a string; "
+            "FIRST_DAY_OF_WEEK is a number;",
+        )
+
+    @modify_settings(INSTALLED_APPS={"append": ["view_tests.app1", "view_tests.app2"]})
+    @override_settings(LANGUAGE_CODE="fr")
+    def test_multiple_catalogs(self):
+        self.page.goto(self.live_server_url + "/jsi18n_multi_catalogs/")
+        self.page.wait_for_load_state("domcontentloaded")
+
+        self.assertEqual(
+            self.page.locator("#app1string").inner_text(),
+            "il faut traduire cette chaîne de caractères de app1",
+        )
+        self.assertEqual(
+            self.page.locator("#app2string").inner_text(),
+            "il faut traduire cette chaîne de caractères de app2",
         )

@@ -5,7 +5,7 @@ from django.contrib import admin
 from django.contrib.admin.models import LogEntry
 from django.contrib.admin.options import IncorrectLookupParameters
 from django.contrib.admin.templatetags.admin_list import pagination
-from django.contrib.admin.tests import AdminSeleniumTestCase
+from django.contrib.admin.tests import AdminPlaywrightTestCase, AdminSeleniumTestCase
 from django.contrib.admin.views.main import (
     ALL_VAR,
     IS_FACETS_VAR,
@@ -2233,6 +2233,328 @@ class SeleniumTests(AdminSeleniumTestCase):
         for css_selector, ordering in cases:
             with self.subTest(ordering=ordering):
                 self.selenium.find_element(By.CSS_SELECTOR, css_selector).click()
+                expected = expected_from_queryset(
+                    GrandChild.objects.all().order_by(*ordering)
+                )
+                self.assertEqual(find_result_row_texts(), expected)
+
+
+@override_settings(ROOT_URLCONF="admin_changelist.urls")
+class PlaywrightTests(AdminPlaywrightTestCase):
+    available_apps = ["admin_changelist"] + AdminPlaywrightTestCase.available_apps
+
+    def setUp(self):
+        User.objects.create_superuser(username="super", password="secret", email=None)
+
+    def test_add_row_selection(self):
+        """
+        The status line for selected rows gets updated correctly (#22038).
+        """
+        self.admin_login(username="super", password="secret")
+        self.page.goto(self.live_server_url + reverse("admin:auth_user_changelist"))
+
+        form_id = "#changelist-form"
+
+        # Test amount of rows in the Changelist
+        rows = self.page.locator("%s #result_list tbody tr" % form_id)
+        self.assertEqual(rows.count(), 1)
+        row = rows.first
+
+        selection_indicator = self.page.locator("%s .action-counter" % form_id)
+        all_selector = self.page.locator("#action-toggle")
+        row_selector = self.page.locator(
+            "%s #result_list tbody tr:first-child .action-select" % form_id
+        )
+
+        # Test current selection
+        self.assertEqual(selection_indicator.inner_text(), "0 of 1 selected")
+        self.assertIs(all_selector.is_checked(), False)
+        self.assertIsNone(row.get_attribute("class"))
+
+        # Select a row and check again
+        row_selector.click()
+        self.assertEqual(selection_indicator.inner_text(), "1 of 1 selected")
+        self.assertIs(all_selector.is_checked(), True)
+        self.assertEqual(row.get_attribute("class"), "selected")
+
+        # Deselect a row and check again
+        row_selector.click()
+        self.assertEqual(selection_indicator.inner_text(), "0 of 1 selected")
+        self.assertIs(all_selector.is_checked(), False)
+        self.assertEqual(row.get_attribute("class"), "")
+
+    def test_modifier_allows_multiple_section(self):
+        """
+        Selecting a row and then selecting another row whilst holding shift
+        should select all rows in-between.
+        """
+        Parent.objects.bulk_create([Parent(name="parent%d" % i) for i in range(5)])
+        self.admin_login(username="super", password="secret")
+        self.page.goto(
+            self.live_server_url + reverse("admin:admin_changelist_parent_changelist")
+        )
+        checkboxes = self.page.locator("tr input.action-select").all()
+        self.assertEqual(len(checkboxes), 5)
+        for c in checkboxes:
+            self.assertIs(c.is_checked(), False)
+        # Check first row. Hold-shift and check next-to-last row.
+        checkboxes[0].click()
+        checkboxes[-2].click(modifiers=["Shift"])
+        for c in checkboxes[:-2]:
+            self.assertIs(c.is_checked(), True)
+        self.assertIs(checkboxes[-1].is_checked(), False)
+
+    def test_selection_counter_is_synced_when_page_is_shown(self):
+        self.admin_login(username="super", password="secret")
+        self.page.goto(self.live_server_url + reverse("admin:auth_user_changelist"))
+
+        form_id = "#changelist-form"
+        first_row_checkbox_selector = (
+            f"{form_id} #result_list tbody tr:first-child .action-select"
+        )
+        selection_indicator_selector = f"{form_id} .action-counter"
+
+        selection_indicator = self.page.locator(selection_indicator_selector)
+        row_checkbox = self.page.locator(first_row_checkbox_selector)
+
+        # Select a row.
+        row_checkbox.click()
+        self.assertEqual(selection_indicator.inner_text(), "1 of 1 selected")
+        # Go to another page and get back.
+        self.page.goto(
+            self.live_server_url + reverse("admin:admin_changelist_parent_changelist")
+        )
+        self.page.go_back()
+        # The selection indicator is synced with the selected checkboxes.
+        selection_indicator = self.page.locator(selection_indicator_selector)
+        row_checkbox = self.page.locator(first_row_checkbox_selector)
+        selected_rows = 1 if row_checkbox.is_checked() else 0
+        self.assertEqual(
+            selection_indicator.inner_text(), f"{selected_rows} of 1 selected"
+        )
+
+    def test_select_all_across_pages(self):
+        Parent.objects.bulk_create([Parent(name="parent%d" % i) for i in range(101)])
+        self.admin_login(username="super", password="secret")
+        self.page.goto(
+            self.live_server_url + reverse("admin:admin_changelist_parent_changelist")
+        )
+
+        selection_indicator = self.page.locator(".action-counter").first
+        select_all_indicator = self.page.locator(".actions .all").first
+        question = self.page.locator(".actions > .question").first
+        clear = self.page.locator(".actions > .clear").first
+        select_all = self.page.locator("#action-toggle")
+        select_across = self.page.locator("[name='select_across']").all()
+
+        self.assertIs(question.is_visible(), False)
+        self.assertIs(clear.is_visible(), False)
+        self.assertIs(select_all.is_checked(), False)
+        for hidden_input in select_across:
+            self.assertEqual(hidden_input.get_attribute("value"), "0")
+        self.assertIs(selection_indicator.is_visible(), True)
+        self.assertEqual(selection_indicator.inner_text(), "0 of 100 selected")
+        self.assertIs(select_all_indicator.is_visible(), False)
+
+        select_all.click()
+        self.assertIs(question.is_visible(), True)
+        self.assertIs(clear.is_visible(), False)
+        self.assertIs(select_all.is_checked(), True)
+        for hidden_input in select_across:
+            self.assertEqual(hidden_input.get_attribute("value"), "0")
+        self.assertIs(selection_indicator.is_visible(), True)
+        self.assertEqual(selection_indicator.inner_text(), "100 of 100 selected")
+        self.assertIs(select_all_indicator.is_visible(), False)
+
+        question.click()
+        self.assertIs(question.is_visible(), False)
+        self.assertIs(clear.is_visible(), True)
+        self.assertIs(select_all.is_checked(), True)
+        for hidden_input in select_across:
+            self.assertEqual(hidden_input.get_attribute("value"), "1")
+        self.assertIs(selection_indicator.is_visible(), False)
+        self.assertIs(select_all_indicator.is_visible(), True)
+
+        clear.click()
+        self.assertIs(question.is_visible(), False)
+        self.assertIs(clear.is_visible(), False)
+        self.assertIs(select_all.is_checked(), False)
+        for hidden_input in select_across:
+            self.assertEqual(hidden_input.get_attribute("value"), "0")
+        self.assertIs(selection_indicator.is_visible(), True)
+        self.assertEqual(selection_indicator.inner_text(), "0 of 100 selected")
+        self.assertIs(select_all_indicator.is_visible(), False)
+
+    def test_actions_warn_on_pending_edits(self):
+        Parent.objects.create(name="foo")
+        self.admin_login(username="super", password="secret")
+        self.page.goto(
+            self.live_server_url + reverse("admin:admin_changelist_parent_changelist")
+        )
+
+        self.page.locator("#id_form-0-name").fill("bar")
+        self.page.locator("#action-toggle").click()
+
+        self.page.once("dialog", lambda dialog: dialog.dismiss())
+        with self.page.expect_event("dialog") as dialog_info:
+            self.page.locator('[name="index"]').first.click()
+        self.assertEqual(
+            dialog_info.value.message,
+            "You have unsaved changes on individual editable fields. If you "
+            "run an action, your unsaved changes will be lost.",
+        )
+
+    def test_save_with_changes_warns_on_pending_action(self):
+        Parent.objects.create(name="parent")
+        self.admin_login(username="super", password="secret")
+        self.page.goto(
+            self.live_server_url + reverse("admin:admin_changelist_parent_changelist")
+        )
+
+        self.page.locator("#id_form-0-name").fill("other name")
+        self.page.locator('[name="action"]').first.select_option("delete_selected")
+
+        self.page.once("dialog", lambda dialog: dialog.dismiss())
+        with self.page.expect_event("dialog") as dialog_info:
+            self.page.locator('[name="_save"]').first.click()
+        self.assertEqual(
+            dialog_info.value.message,
+            "You have selected an action, but you haven’t saved your "
+            "changes to individual fields yet. Please click OK to save. "
+            "You’ll need to re-run the action.",
+        )
+
+    def test_save_without_changes_warns_on_pending_action(self):
+        Parent.objects.create(name="parent")
+        self.admin_login(username="super", password="secret")
+        self.page.goto(
+            self.live_server_url + reverse("admin:admin_changelist_parent_changelist")
+        )
+
+        self.page.locator('[name="action"]').first.select_option("delete_selected")
+
+        self.page.once("dialog", lambda dialog: dialog.dismiss())
+        with self.page.expect_event("dialog") as dialog_info:
+            self.page.locator('[name="_save"]').first.click()
+        self.assertEqual(
+            dialog_info.value.message,
+            "You have selected an action, and you haven’t made any "
+            "changes on individual fields. You’re probably looking for "
+            "the Run button rather than the Save button.",
+        )
+
+    def test_collapse_filters(self):
+        self.admin_login(username="super", password="secret")
+        self.page.goto(self.live_server_url + reverse("admin:auth_user_changelist"))
+
+        # The UserAdmin has 3 field filters by default: "staff status",
+        # "superuser status", and "active".
+        details = self.page.locator("details").all()
+        # All filters are opened at first.
+        for detail in details:
+            self.assertIsNotNone(detail.get_attribute("open"))
+        # Collapse "staff' and "superuser" filters.
+        for detail in details[:2]:
+            detail.locator("summary").click()
+            self.assertIsNone(detail.get_attribute("open"))
+        # Filters are in the same state after refresh.
+        self.page.reload()
+        self.assertIsNone(
+            self.page.locator("[data-filter-title='staff status']").get_attribute(
+                "open"
+            )
+        )
+        self.assertIsNone(
+            self.page.locator("[data-filter-title='superuser status']").get_attribute(
+                "open"
+            )
+        )
+        self.assertIsNotNone(
+            self.page.locator("[data-filter-title='active']").get_attribute("open")
+        )
+        # Collapse a filter on another view (Bands).
+        self.page.goto(
+            self.live_server_url + reverse("admin:admin_changelist_band_changelist")
+        )
+        self.page.locator("summary").click()
+        # Go to Users view and then, back again to Bands view.
+        self.page.goto(self.live_server_url + reverse("admin:auth_user_changelist"))
+        self.page.goto(
+            self.live_server_url + reverse("admin:admin_changelist_band_changelist")
+        )
+        # The filter remains in the same state.
+        self.assertIsNone(
+            self.page.locator(
+                "[data-filter-title='number of members']",
+            ).get_attribute("open")
+        )
+
+    def test_collapse_filter_with_unescaped_title(self):
+        self.admin_login(username="super", password="secret")
+        changelist_url = reverse("admin:admin_changelist_proxyuser_changelist")
+        self.page.goto(self.live_server_url + changelist_url)
+        # Title is escaped.
+        filter_title = self.page.locator("[data-filter-title='It\\'s OK']")
+        filter_title.locator("summary").click()
+        self.assertIsNone(filter_title.get_attribute("open"))
+        # Filter is in the same state after refresh.
+        self.page.reload()
+        self.assertIsNone(
+            self.page.locator("[data-filter-title='It\\'s OK']").get_attribute("open")
+        )
+
+    def test_list_display_ordering(self):
+        parent_a = Parent.objects.create(name="Parent A")
+        child_l = Child.objects.create(name="Child L", parent=None)
+        child_m = Child.objects.create(name="Child M", parent=parent_a)
+        GrandChild.objects.create(name="Grandchild X", parent=child_m)
+        GrandChild.objects.create(name="Grandchild Y", parent=child_l)
+        GrandChild.objects.create(name="Grandchild Z", parent=None)
+
+        self.admin_login(username="super", password="secret")
+        changelist_url = reverse("admin:admin_changelist_grandchild_changelist")
+        self.page.goto(self.live_server_url + changelist_url)
+
+        def find_result_row_texts():
+            table = self.page.locator("#result_list")
+            # Drop header from the result list
+            return [
+                " ".join(part for part in row.inner_text().split("\t") if part)
+                for row in table.locator("tr").all()[1:]
+            ]
+
+        def expected_from_queryset(qs):
+            return [
+                " ".join("-" if i is None else i for i in item)
+                for item in qs.values_list(
+                    "name", "parent__name", "parent__parent__name"
+                )
+            ]
+
+        cases = [
+            # Order ascending by `name`.
+            ("th.sortable.column-name", ("name",)),
+            # Order descending by `name`.
+            ("th.sortable.column-name", ("-name",)),
+            # Order ascending by `parent__name`.
+            ("th.sortable.column-parent__name", ("parent__name", "-name")),
+            # Order descending by `parent__name`.
+            ("th.sortable.column-parent__name", ("-parent__name", "-name")),
+            # Order ascending by `parent__parent__name`.
+            (
+                "th.sortable.column-parent__parent__name",
+                ("parent__parent__name", "-parent__name", "-name"),
+            ),
+            # Order descending by `parent__parent__name`.
+            (
+                "th.sortable.column-parent__parent__name",
+                ("-parent__parent__name", "-parent__name", "-name"),
+            ),
+        ]
+        for css_selector, ordering in cases:
+            with self.subTest(ordering=ordering):
+                self.page.locator(css_selector).click()
+                self.page.wait_for_load_state("load")
                 expected = expected_from_queryset(
                     GrandChild.objects.all().order_by(*ordering)
                 )

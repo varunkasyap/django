@@ -2,6 +2,7 @@ from contextlib import contextmanager
 
 from django.contrib.staticfiles.testing import StaticLiveServerTestCase
 from django.test import modify_settings, override_settings
+from django.test.playwright import PlaywrightTestCase
 from django.test.selenium import SeleniumTestCase
 from django.utils.csp import CSP
 from django.utils.translation import gettext as _
@@ -255,3 +256,41 @@ class AdminSeleniumTestCase(SeleniumTestCase, StaticLiveServerTestCase):
             )
             == "true"
         )
+
+
+@modify_settings(
+    MIDDLEWARE={"append": "django.middleware.csp.ContentSecurityPolicyMiddleware"}
+)
+@override_settings(
+    SECURE_CSP={
+        "default-src": [CSP.NONE],
+        "connect-src": [CSP.SELF],
+        "img-src": [CSP.SELF],
+        "script-src": [CSP.SELF],
+        "style-src": [CSP.SELF],
+    },
+)
+class AdminPlaywrightTestCase(PlaywrightTestCase, StaticLiveServerTestCase):
+    available_apps = [
+        "django.contrib.admin",
+        "django.contrib.auth",
+        "django.contrib.contenttypes",
+        "django.contrib.sessions",
+        "django.contrib.sites",
+    ]
+
+    def tearDown(self):
+        # Ensure that no CSP violations were logged in the browser.
+        self.assertEqual(self._csp_violations, [])
+        super().tearDown()
+
+    def admin_login(self, username, password, login_url="/admin/"):
+        """
+        Log in to the admin.
+        """
+        self.page.goto(f"{self.live_server_url}{login_url}")
+        self.page.get_by_label(_("username")).fill(username)
+        self.page.get_by_label(_("Password")).fill(password)
+        login_text = _("Log in")
+        self.page.get_by_role("button", name=login_text).click()
+        self.page.wait_for_url(f"{self.live_server_url}{login_url}")

@@ -4,7 +4,7 @@ from contextlib import contextmanager
 
 from django.contrib import admin
 from django.contrib.admin.exceptions import NotRegistered
-from django.contrib.admin.tests import AdminSeleniumTestCase
+from django.contrib.admin.tests import AdminPlaywrightTestCase, AdminSeleniumTestCase
 from django.contrib.admin.views.autocomplete import AutocompleteJsonView
 from django.contrib.auth.models import Permission, User
 from django.contrib.contenttypes.models import ContentType
@@ -597,3 +597,163 @@ class SeleniumTests(AdminSeleniumTestCase):
         rows = self.selenium.find_elements(By.CSS_SELECTOR, ".dynamic-authorship_set")
         self.assertEqual(len(rows), 4)
         assertNoResults(rows[-1])
+
+
+@override_settings(ROOT_URLCONF="admin_views.urls")
+class PlaywrightTests(AdminPlaywrightTestCase):
+    available_apps = ["admin_views"] + AdminPlaywrightTestCase.available_apps
+
+    def setUp(self):
+        self.superuser = User.objects.create_superuser(
+            username="super",
+            password="secret",
+            email="super@example.com",
+        )
+        self.admin_login(
+            username="super",
+            password="secret",
+            login_url=reverse("autocomplete_admin:index"),
+        )
+
+    def test_select(self):
+        self.page.goto(
+            self.live_server_url + reverse("autocomplete_admin:admin_views_answer_add")
+        )
+        elem = self.page.locator(".select2-selection")
+        with self.page.expect_response(lambda r: "autocomplete" in r.url):
+            elem.click()  # Open the autocomplete dropdown.
+        results = self.page.locator(".select2-results")
+        self.assertTrue(results.is_visible())
+        option = self.page.locator(".select2-results__option")
+        self.assertEqual(option.inner_text(), "No results found")
+        elem.click()  # Close the autocomplete dropdown.
+        q1 = Question.objects.create(question="Who am I?")
+        Question.objects.bulk_create(
+            Question(question=str(i)) for i in range(PAGINATOR_SIZE + 10)
+        )
+        with self.page.expect_response(lambda r: "autocomplete" in r.url):
+            elem.click()  # Reopen the dropdown now that some objects exist.
+        result_container = self.page.locator(".select2-results")
+        self.assertTrue(result_container.is_visible())
+        # PAGINATOR_SIZE results and "Loading more results".
+        self.assertEqual(
+            result_container.locator(".select2-results__option").count(),
+            PAGINATOR_SIZE + 1,
+        )
+        search = self.page.locator(".select2-search__field")
+        # Load next page of results by scrolling to the bottom of the list.
+        for _ in range(PAGINATOR_SIZE + 1):
+            search.press("ArrowDown")
+        # Wait for all objects to be loaded.
+        result_container.locator(".select2-results__option").nth(
+            PAGINATOR_SIZE + 10
+        ).wait_for()
+        # All objects are now loaded.
+        self.assertEqual(
+            result_container.locator(".select2-results__option").count(),
+            PAGINATOR_SIZE + 11,
+        )
+        # Limit the results with the search field.
+        with self.page.expect_response(lambda r: "autocomplete" in r.url):
+            search.press_sequentially("Who")
+            # Ajax request is delayed.
+            self.assertTrue(result_container.is_visible())
+            self.assertEqual(
+                result_container.locator(".select2-results__option").count(),
+                PAGINATOR_SIZE + 12,
+            )
+        self.assertTrue(result_container.is_visible())
+        self.assertEqual(
+            result_container.locator(".select2-results__option").count(), 1
+        )
+        # Select the result.
+        search.press("Enter")
+        select = self.page.locator("#id_question")
+        self.assertEqual(select.input_value(), str(q1.pk))
+
+    def test_select_multiple(self):
+        self.page.goto(
+            self.live_server_url
+            + reverse("autocomplete_admin:admin_views_question_add")
+        )
+        elem = self.page.locator(".select2-selection")
+        with self.page.expect_response(lambda r: "autocomplete" in r.url):
+            elem.click()  # Open the autocomplete dropdown.
+        results = self.page.locator(".select2-results")
+        self.assertTrue(results.is_visible())
+        option = self.page.locator(".select2-results__option")
+        self.assertEqual(option.inner_text(), "No results found")
+        elem.click()  # Close the autocomplete dropdown.
+        Question.objects.create(question="Who am I?")
+        Question.objects.bulk_create(
+            Question(question=str(i)) for i in range(PAGINATOR_SIZE + 10)
+        )
+        with self.page.expect_response(lambda r: "autocomplete" in r.url):
+            elem.click()  # Reopen the dropdown now that some objects exist.
+        result_container = self.page.locator(".select2-results")
+        self.assertIs(result_container.is_visible(), True)
+        self.assertEqual(
+            result_container.locator(".select2-results__option").count(),
+            PAGINATOR_SIZE + 1,
+        )
+        search = self.page.locator(".select2-search__field")
+        # Load next page of results by scrolling to the bottom of the list.
+        for _ in range(PAGINATOR_SIZE + 1):
+            search.press("ArrowDown")
+        # Wait for all objects to be loaded.
+        result_container.locator(".select2-results__option").nth(
+            PAGINATOR_SIZE + 10
+        ).wait_for()
+        self.assertEqual(
+            result_container.locator(".select2-results__option").count(),
+            PAGINATOR_SIZE + 11,
+        )
+        # Limit the results with the search field.
+        with self.page.expect_response(lambda r: "autocomplete" in r.url):
+            search.press_sequentially("Who")
+            # Ajax request is delayed.
+            self.assertIs(result_container.is_visible(), True)
+            self.assertEqual(
+                result_container.locator(".select2-results__option").count(),
+                PAGINATOR_SIZE + 12,
+            )
+        self.assertIs(result_container.is_visible(), True)
+        self.assertEqual(
+            result_container.locator(".select2-results__option").count(), 1
+        )
+        # Select the result.
+        search.press("Enter")
+        self.page.locator(".select2-results").wait_for(state="hidden")
+        # Reopen the dropdown.
+        with self.page.expect_response(lambda r: "autocomplete" in r.url):
+            elem.click()
+        result_container = self.page.locator(".select2-results")
+        self.assertIs(result_container.is_visible(), True)
+        # Add the first result to the selection.
+        search.press("ArrowDown")
+        search.press("Enter")
+        select = self.page.locator("#id_related_questions option:checked")
+        self.assertEqual(select.count(), 2)
+
+    def test_inline_add_another_widgets(self):
+        def assertNoResults(row):
+            elem = row.locator(".select2-selection")
+            with self.page.expect_response(lambda r: "autocomplete" in r.url):
+                elem.click()  # Open the autocomplete dropdown.
+            results = self.page.locator(".select2-results")
+            self.assertTrue(results.is_visible())
+            option = self.page.locator(".select2-results__option")
+            self.assertEqual(option.inner_text(), "No results found")
+
+        # Autocomplete works in rows present when the page loads.
+        self.page.goto(
+            self.live_server_url + reverse("autocomplete_admin:admin_views_book_add")
+        )
+        rows = self.page.locator(".dynamic-authorship_set")
+        self.assertEqual(rows.count(), 3)
+        assertNoResults(rows.nth(0))
+        # Autocomplete works in rows added using the "Add another" button.
+        self.page.get_by_role("button", name="Add another Authorship").click()
+        rows = self.page.locator(".dynamic-authorship_set")
+        self.assertEqual(rows.count(), 4)
+        assertNoResults(rows.last)

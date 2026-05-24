@@ -1,5 +1,5 @@
 from django.contrib.admin.models import CHANGE, LogEntry
-from django.contrib.admin.tests import AdminSeleniumTestCase
+from django.contrib.admin.tests import AdminPlaywrightTestCase, AdminSeleniumTestCase
 from django.contrib.auth.models import User
 from django.core.paginator import Paginator
 from django.test import TestCase, override_settings
@@ -109,3 +109,63 @@ class SeleniumTests(AdminSeleniumTestCase):
         rows = self.selenium.find_elements(By.CSS_SELECTOR, "#change-history tbody tr")
         self.assertIn("Changed something 101", rows[0].text)
         self.assertIn("Changed something 200", rows[-1].text)
+
+
+@override_settings(ROOT_URLCONF="admin_views.urls")
+class PlaywrightTests(AdminPlaywrightTestCase):
+    available_apps = ["admin_views"] + AdminPlaywrightTestCase.available_apps
+
+    def setUp(self):
+        self.superuser = User.objects.create_superuser(
+            username="super",
+            password="secret",
+            email="super@example.com",
+        )
+        for i in range(1, 1101):
+            LogEntry.objects.log_actions(
+                self.superuser.pk,
+                [self.superuser],
+                CHANGE,
+                change_message=f"Changed something {i}",
+            )
+        self.admin_login(
+            username="super",
+            password="secret",
+            login_url=reverse("admin:index"),
+        )
+
+    def test_pagination(self):
+        user_history_url = reverse("admin:auth_user_history", args=(self.superuser.pk,))
+        self.page.goto(self.live_server_url + user_history_url)
+
+        paginator = self.page.locator(".paginator")
+        self.assertEqual(paginator.evaluate("el => el.tagName.toLowerCase()"), "nav")
+        labelledby = paginator.get_attribute("aria-labelledby")
+        description = self.page.locator("#%s" % labelledby)
+        self.assertHTMLEqual(
+            description.evaluate("el => el.outerHTML"),
+            '<h2 id="pagination" class="visually-hidden">'
+            "Pagination user entries</h2>",
+        )
+        self.assertTrue(paginator.is_visible())
+        aria_current_link = paginator.locator("[aria-current]")
+        self.assertEqual(aria_current_link.count(), 1)
+        # The current page.
+        current_page_link = aria_current_link.first
+        self.assertEqual(current_page_link.get_attribute("aria-current"), "page")
+        self.assertEqual(current_page_link.get_attribute("href"), "")
+        self.assertIn("%s entries" % LogEntry.objects.count(), paginator.inner_text())
+        self.assertIn(str(Paginator.ELLIPSIS), paginator.inner_text())
+        self.assertEqual(current_page_link.inner_text(), "1")
+        # The last page.
+        last_page_link = self.page.locator("ul > li:last-child > a")
+        self.assertTrue(last_page_link.inner_text(), "20")
+        # Select the second page.
+        pages = paginator.locator("a")
+        second_page_link = pages.nth(1)
+        self.assertEqual(second_page_link.inner_text(), "2")
+        second_page_link.click()
+        self.assertIn("?p=2", self.page.url)
+        rows = self.page.locator("#change-history tbody tr")
+        self.assertIn("Changed something 101", rows.first.inner_text())
+        self.assertIn("Changed something 200", rows.last.inner_text())
