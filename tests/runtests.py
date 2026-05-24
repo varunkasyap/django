@@ -25,6 +25,7 @@ else:
     from django.core.exceptions import ImproperlyConfigured
     from django.db import connection, connections
     from django.test import TestCase, TransactionTestCase
+    from django.test.playwright import PlaywrightTestCase, PlaywrightTestCaseBase
     from django.test.runner import get_max_test_processes, parallel_type
     from django.test.selenium import SeleniumTestCase, SeleniumTestCaseBase
     from django.test.utils import NullTimeKeeper, TimeKeeper, get_runner
@@ -344,6 +345,28 @@ class ActionSelenium(argparse.Action):
         setattr(namespace, self.dest, browsers)
 
 
+class ActionPlaywright(argparse.Action):
+    """
+    Validate the comma-separated list of requested browsers.
+    """
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        try:
+            from playwright.sync_api import sync_playwright  # noqa
+        except ImportError as e:
+            raise ImproperlyConfigured(f"Error loading playwright module: {e}")
+        browsers = values.split(",")
+        for browser in browsers:
+            try:
+                PlaywrightTestCaseBase.import_browser(browser)
+            except ImportError:
+                raise argparse.ArgumentError(
+                    self,
+                    "Playwright browser specification '%s' is not valid." % browser,
+                )
+        setattr(namespace, self.dest, browsers)
+
+
 def django_tests(
     verbosity,
     interactive,
@@ -606,7 +629,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--headless",
         action="store_true",
-        help="Run selenium tests in headless mode, if the browser supports the option.",
+        help="Run Selenium/Playwright tests in headless mode, if the browser supports "
+        "the option.",
     )
     parser.add_argument(
         "--selenium-hub",
@@ -619,6 +643,18 @@ if __name__ == "__main__":
             "The external host that can be reached by the selenium hub instance when "
             "running Selenium tests via Selenium Hub."
         ),
+    )
+    parser.add_argument(
+        "--playwright",
+        action=ActionPlaywright,
+        metavar="BROWSERS",
+        help="A comma-separated list of browsers to run the Playwright tests against.",
+    )
+    parser.add_argument(
+        "--playwright-screenshots",
+        action="store_true",
+        help="Take screenshots during Playwright tests to capture the user "
+        "interface.",
     )
     parser.add_argument(
         "--debug-sql",
@@ -707,6 +743,10 @@ if __name__ == "__main__":
         parser.error("--screenshots require --selenium to be used.")
     if options.screenshots and options.tags:
         parser.error("--screenshots and --tag are mutually exclusive.")
+    if options.playwright_screenshots and not options.playwright:
+        parser.error("--playwright-screenshots require --playwright to be used.")
+    if options.playwright_screenshots and options.tags:
+        parser.error("--playwright-screenshots and --tag are mutually exclusive.")
 
     # Allow including a trailing slash on app_labels for tab completion
     # convenience
@@ -763,6 +803,26 @@ if __name__ == "__main__":
         if options.screenshots:
             options.tags = ["screenshot"]
             SeleniumTestCase.screenshots = options.screenshots
+
+    if options.playwright:
+        if (
+            multiprocessing.get_start_method() in {"spawn", "forkserver"}
+            and options.parallel != 1
+        ):
+            parser.error(
+                "You cannot use --playwright with parallel tests on this system. "
+                "Pass --parallel=1 to use --playwright."
+            )
+        if not options.tags:
+            options.tags = ["playwright"]
+        elif "playwright" not in options.tags:
+            options.tags.append("playwright")
+        # TODO VK external_host and playwright_hub ??
+        PlaywrightTestCaseBase.headless = options.headless
+        PlaywrightTestCaseBase.browsers = options.playwright
+        if options.playwright_screenshots:
+            options.tags = ["playwright_screenshot"]
+            PlaywrightTestCase.screenshots = options.playwright_screenshots
 
     if options.bisect:
         bisect_tests(

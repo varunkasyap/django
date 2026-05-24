@@ -1,8 +1,10 @@
 from django.contrib.admin.tests import AdminSeleniumTestCase
 from django.contrib.auth.models import User
-from django.test import override_settings
+from django.test import override_settings, tag
 from django.test.selenium import screenshot_cases
 from django.urls import reverse
+
+from django.contrib.admin.playwright_tests import AdminPlaywrightTestCase
 
 
 @override_settings(ROOT_URLCONF="auth_tests.urls_admin")
@@ -152,3 +154,142 @@ class SeleniumAuthTests(AdminSeleniumTestCase):
 
         # The fieldset legend is aligned with other fields.
         self.take_screenshot("fieldset_legend_wide")
+
+
+@override_settings(ROOT_URLCONF="auth_tests.urls_admin")
+class PlaywrightAuthTests(AdminPlaywrightTestCase):
+    available_apps = AdminPlaywrightTestCase.available_apps
+
+    def setUp(self):
+        self.superuser = User.objects.create_superuser(
+            username="super",
+            password="secret",
+            email="super@example.com",
+        )
+
+    def test_add_new_user(self):
+        """A user with no password can be added.
+
+        Enabling/disabling the usable password field shows/hides the password
+        fields when adding a user.
+        """
+        user_add_url = reverse("auth_test_admin:auth_user_add")
+        self.admin_login(username="super", password="secret")
+        self.page.goto(self.live_server_url + user_add_url)
+
+        pw_switch_on = self.page.locator(
+            'input[name="usable_password"][value="true"]'
+        )
+        pw_switch_off = self.page.locator(
+            'input[name="usable_password"][value="false"]'
+        )
+        password1 = self.page.locator('input[name="password1"]')
+        password2 = self.page.locator('input[name="password2"]')
+
+        # Default is to set a password on user creation.
+        self.assertIs(pw_switch_on.is_checked(), True)
+        self.assertIs(pw_switch_off.is_checked(), False)
+
+        # The password fields are visible.
+        self.assertIs(password1.is_visible(), True)
+        self.assertIs(password2.is_visible(), True)
+
+        # Click to disable password-based authentication.
+        pw_switch_off.click()
+
+        # Radio buttons are updated accordingly.
+        self.assertIs(pw_switch_on.is_checked(), False)
+        self.assertIs(pw_switch_off.is_checked(), True)
+
+        # The password fields are hidden.
+        self.assertIs(password1.is_visible(), False)
+        self.assertIs(password2.is_visible(), False)
+
+        # The warning message should not be shown.
+        self.assertEqual(self.page.locator("#id_unusable_warning").count(), 0)
+
+    def test_change_password_for_existing_user(self):
+        """A user can have their password changed or unset.
+
+        Enabling/disabling the usable password field shows/hides the password
+        fields and the warning about password lost.
+        """
+        user = User.objects.create_user(
+            username="ada", password="charles", email="ada@example.com"
+        )
+        user_url = reverse(
+            "auth_test_admin:auth_user_password_change", args=(user.pk,)
+        )
+        self.admin_login(username="super", password="secret")
+        self.page.goto(self.live_server_url + user_url)
+
+        pw_switch_on = self.page.locator(
+            'input[name="usable_password"][value="true"]'
+        )
+        pw_switch_off = self.page.locator(
+            'input[name="usable_password"][value="false"]'
+        )
+        password1 = self.page.locator('input[name="password1"]')
+        password2 = self.page.locator('input[name="password2"]')
+        submit_set = self.page.locator('input[type="submit"].set-password')
+        submit_unset = self.page.locator('input[type="submit"].unset-password')
+
+        # By default password-based authentication is enabled.
+        self.assertIs(pw_switch_on.is_checked(), True)
+        self.assertIs(pw_switch_off.is_checked(), False)
+
+        # The password fields are visible.
+        self.assertIs(password1.is_visible(), True)
+        self.assertIs(password2.is_visible(), True)
+
+        # Only the set password submit button is visible.
+        self.assertIs(submit_set.is_visible(), True)
+        self.assertIs(submit_unset.is_visible(), False)
+
+        # Click to disable password-based authentication.
+        pw_switch_off.click()
+
+        # Radio buttons are updated accordingly.
+        self.assertIs(pw_switch_on.is_checked(), False)
+        self.assertIs(pw_switch_off.is_checked(), True)
+
+        # The password fields are hidden.
+        self.assertIs(password1.is_visible(), False)
+        self.assertIs(password2.is_visible(), False)
+
+        # Only the unset password submit button is visible.
+        self.assertIs(submit_unset.is_visible(), True)
+        self.assertIs(submit_set.is_visible(), False)
+
+        # The warning about password being lost is shown.
+        warning = self.page.locator("#id_unusable_warning")
+        self.assertIs(warning.is_visible(), True)
+
+        # Click to enable password-based authentication.
+        pw_switch_on.click()
+
+        # The warning disappears.
+        self.assertIs(warning.is_visible(), False)
+
+        # The password fields are shown.
+        self.assertIs(password1.is_visible(), True)
+        self.assertIs(password2.is_visible(), True)
+
+        # Only the set password submit button is visible.
+        self.assertIs(submit_set.is_visible(), True)
+        self.assertIs(submit_unset.is_visible(), False)
+
+    @tag("playwright_screenshot")
+    def test_fieldset_legend_wide_alignment(self):
+        user_add_url = reverse("auth_test_admin:auth_user_add")
+        self.admin_login(username="super", password="secret")
+        cases = ["desktop_size", "mobile_size", "rtl", "dark", "high_contrast"]
+        for case in cases:
+            with self.subTest(case=case):
+                with getattr(self, case)():
+                    self.page.goto(self.live_server_url + user_add_url)
+
+                    # The fieldset legend is aligned with other fields.
+                    self.take_screenshot(
+                        "fieldset_legend_wide", screenshot_case=case
+                    )
