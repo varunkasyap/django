@@ -11,7 +11,7 @@ from django import forms
 from django.conf import settings
 from django.contrib import admin
 from django.contrib.admin import widgets
-from django.contrib.admin.tests import AdminSeleniumTestCase
+from django.contrib.admin.tests import AdminPlaywrightTestCase, AdminSeleniumTestCase
 from django.contrib.auth.models import User
 from django.core.files.storage import default_storage
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -24,6 +24,7 @@ from django.db.models import (
     UUIDField,
 )
 from django.test import SimpleTestCase, TestCase, override_settings
+from django.test.playwright import screenshot_cases as playwright_screenshot_cases
 from django.test.selenium import screenshot_cases
 from django.test.utils import requires_tz_support
 from django.urls import reverse
@@ -1004,6 +1005,16 @@ class AdminWidgetSeleniumTestCase(AdminSeleniumTestCase):
         )
 
 
+@override_settings(ROOT_URLCONF="admin_widgets.urls")
+class AdminWidgetPlaywrightTestCase(AdminPlaywrightTestCase):
+    available_apps = ["admin_widgets"] + AdminPlaywrightTestCase.available_apps
+
+    def setUp(self):
+        self.u1 = User.objects.create_superuser(
+            username="super", password="secret", email="super@example.com"
+        )
+
+
 class DateTimePickerSeleniumTests(AdminWidgetSeleniumTestCase):
     def test_show_hide_date_time_picker_widgets(self):
         """
@@ -1253,6 +1264,219 @@ class DateTimePickerSeleniumTests(AdminWidgetSeleniumTestCase):
         next_element = warning.find_element(By.XPATH, "./following-sibling::*[1]")
         # warning message appears above the error message.
         self.assertEqual(next_element, errors)
+
+
+class DateTimePickerPlaywrightTests(AdminWidgetPlaywrightTestCase):
+    def test_show_hide_date_time_picker_widgets(self):
+        """
+        Pressing the ESC key or clicking on a widget value closes the date and
+        time picker widgets.
+        """
+        self.admin_login(username="super", password="secret", login_url="/")
+        # Open a page that has a date and time picker widgets
+        self.page.goto(self.live_server_url + reverse("admin:admin_widgets_member_add"))
+
+        # First, with the date picker widget ---------------------------------
+        cal_icon = self.page.locator("#calendarlink0")
+        # The date picker is hidden
+        self.assertFalse(self.page.locator("#calendarbox0").is_visible())
+        # Click the calendar icon
+        cal_icon.click()
+        # The date picker is visible
+        self.assertTrue(self.page.locator("#calendarbox0").is_visible())
+        # Press the ESC key
+        self.page.keyboard.press("Escape")
+        # The date picker is hidden again
+        self.assertFalse(self.page.locator("#calendarbox0").is_visible())
+        # Click the calendar icon, then on the 15th of current month
+        cal_icon.click()
+        self.page.locator("#calendarbox0").get_by_text("15", exact=True).click()
+        self.assertFalse(self.page.locator("#calendarbox0").is_visible())
+        self.assertEqual(
+            self.page.locator("#id_birthdate_0").input_value(),
+            datetime.today().strftime("%Y-%m-") + "15",
+        )
+
+        # Then, with the time picker widget ----------------------------------
+        time_icon = self.page.locator("#clocklink0")
+        # The time picker is hidden
+        self.assertFalse(self.page.locator("#clockbox0").is_visible())
+        # Click the time icon
+        time_icon.click()
+        # The time picker is visible
+        self.assertTrue(self.page.locator("#clockbox0").is_visible())
+        self.assertEqual(
+            [x.inner_text() for x in self.page.locator("ul.timelist li a").all()],
+            ["Now", "Midnight", "6 a.m.", "Noon", "6 p.m."],
+        )
+        # Press the ESC key
+        self.page.keyboard.press("Escape")
+        # The time picker is hidden again
+        self.assertFalse(self.page.locator("#clockbox0").is_visible())
+        # Click the time icon, then select the 'Noon' value
+        time_icon.click()
+        self.page.locator("#clockbox0").get_by_text("Noon").click()
+        self.assertFalse(self.page.locator("#clockbox0").is_visible())
+        self.assertEqual(
+            self.page.locator("#id_birthdate_1").input_value(),
+            "12:00:00",
+        )
+
+    def test_calendar_nonday_class(self):
+        """
+        Ensure cells that are not days of the month have the `nonday` CSS
+        class. Refs #4574.
+        """
+        self.admin_login(username="super", password="secret", login_url="/")
+        # Open a page that has a date and time picker widgets
+        self.page.goto(self.live_server_url + reverse("admin:admin_widgets_member_add"))
+
+        # fill in the birth date.
+        self.page.locator("#id_birthdate_0").fill("2013-06-01")
+
+        # Click the calendar icon
+        self.page.locator("#calendarlink0").click()
+
+        # get all the tds within the calendar
+        calendar0 = self.page.locator("#calendarin0")
+        tds = calendar0.locator("td").all()
+
+        # make sure the first and last 6 cells have class nonday
+        for td in tds[:6] + tds[-6:]:
+            self.assertEqual(td.get_attribute("class"), "nonday")
+
+    def test_calendar_selected_class(self):
+        """
+        Ensure cell for the day in the input has the `selected` CSS class.
+        Refs #4574.
+        """
+        self.admin_login(username="super", password="secret", login_url="/")
+        # Open a page that has a date and time picker widgets
+        self.page.goto(self.live_server_url + reverse("admin:admin_widgets_member_add"))
+
+        # fill in the birth date.
+        self.page.locator("#id_birthdate_0").fill("2013-06-01")
+
+        # Click the calendar icon
+        self.page.locator("#calendarlink0").click()
+
+        # get all the tds within the calendar
+        calendar0 = self.page.locator("#calendarin0")
+        tds = calendar0.locator("td").all()
+
+        # verify the selected cell
+        selected = tds[6]
+        self.assertEqual(selected.get_attribute("class"), "selected")
+
+        self.assertEqual(selected.inner_text(), "1")
+
+    def test_calendar_no_selected_class(self):
+        """
+        Ensure no cells are given the selected class when the field is empty.
+        Refs #4574.
+        """
+        self.admin_login(username="super", password="secret", login_url="/")
+        # Open a page that has a date and time picker widgets
+        self.page.goto(self.live_server_url + reverse("admin:admin_widgets_member_add"))
+
+        # Click the calendar icon
+        self.page.locator("#calendarlink0").click()
+
+        # get all the tds within the calendar
+        calendar0 = self.page.locator("#calendarin0")
+        tds = calendar0.locator("td").all()
+
+        # verify there are no cells with the selected class
+        selected = [td for td in tds if td.get_attribute("class") == "selected"]
+
+        self.assertEqual(len(selected), 0)
+
+    def test_calendar_show_date_from_input(self):
+        """
+        The calendar shows the date from the input field for every locale
+        supported by Django.
+        """
+        self.admin_login(username="super", password="secret", login_url="/")
+
+        # Enter test data
+        member = Member.objects.create(
+            name="Bob", birthdate=datetime(1984, 5, 15), gender="M"
+        )
+
+        # Get month name translations for every locale
+        month_string = "May"
+        path = os.path.join(
+            os.path.dirname(import_module("django.contrib.admin").__file__), "locale"
+        )
+        url = reverse("admin:admin_widgets_member_change", args=(member.pk,))
+        with self.small_screen_size():
+            for language_code, language_name in settings.LANGUAGES:
+                try:
+                    catalog = gettext.translation("djangojs", path, [language_code])
+                except OSError:
+                    continue
+                if month_string in catalog._catalog:
+                    month_name = catalog._catalog[month_string]
+                else:
+                    month_name = month_string
+
+                # Get the expected caption.
+                may_translation = month_name
+                expected_caption = "{:s} {:d}".format(may_translation, 1984)
+
+                # Every locale.
+                with override_settings(LANGUAGE_CODE=language_code):
+                    # Open a page that has a date picker widget.
+                    self.page.goto(self.live_server_url + url)
+                    # Click on the calendar icon.
+                    self.page.locator("#calendarlink0").click()
+                    # The right month and year are displayed.
+                    self.assertEqual(
+                        self.page.locator("#calendarin0 caption").text_content(),
+                        expected_caption,
+                    )
+
+    def test_calendar_press_enter_focus_element(self):
+        self.admin_login(username="super", password="secret", login_url="/")
+        self.page.goto(self.live_server_url + reverse("admin:admin_widgets_member_add"))
+        icon = self.page.locator("#calendarlink0")
+        expected_focus = self.page.locator("div#calendarin0 table td.today a")
+        icon.press("Enter")
+        self.assertTrue(expected_focus.evaluate("el => el === document.activeElement"))
+
+    @override_settings(TIME_ZONE="Asia/Seoul")
+    def test_timezone_warning_message(self):
+        self.admin_login(username="super", password="secret", login_url="/")
+
+        self.page.goto(self.live_server_url + reverse("admin:admin_widgets_member_add"))
+
+        datetime_el = self.page.locator("p.datetime")
+        warnings = self.page.locator("div.field-birthdate div.timezonewarning")
+        self.assertEqual(warnings.count(), 1)
+
+        warning = warnings.first
+        self.assertTrue(warning.is_visible())
+        # Warning messages are generally located just above the field block.
+        self.assertTrue(
+            warning.evaluate(
+                "(el, dtEl) => el.nextElementSibling === dtEl",
+                datetime_el.element_handle(),
+            )
+        )
+
+        date = datetime_el.locator("input").first
+        date.fill("invalid")
+        self.page.locator("input[name='_save']").click()
+
+        errors = self.page.locator("#id_birthdate_error")
+        warning = self.page.locator("div.help.timezonewarning")
+        # warning message appears above the error message.
+        self.assertTrue(
+            warning.evaluate(
+                "(el, errEl) => el.nextElementSibling === errEl",
+                errors.element_handle(),
+            )
+        )
 
 
 @requires_tz_support
@@ -1862,6 +2086,546 @@ class HorizontalVerticalFilterSeleniumTests(AdminWidgetSeleniumTestCase):
         )
 
 
+class HorizontalVerticalFilterPlaywrightTests(AdminWidgetPlaywrightTestCase):
+    def setUp(self):
+        super().setUp()
+        self.lisa = Student.objects.create(name="Lisa")
+        self.john = Student.objects.create(name="John")
+        self.bob = Student.objects.create(name="Bob")
+        self.peter = Student.objects.create(name="Peter")
+        self.jenny = Student.objects.create(name="Jenny")
+        self.jason = Student.objects.create(name="Jason")
+        self.cliff = Student.objects.create(name="Cliff")
+        self.arthur = Student.objects.create(name="Arthur")
+        self.school = School.objects.create(name="School of Awesome")
+
+    def assertButtonsDisabled(
+        self,
+        mode,
+        field_name,
+        choose_btn_disabled=False,
+        remove_btn_disabled=False,
+        choose_all_btn_disabled=False,
+        remove_all_btn_disabled=False,
+    ):
+        choose_button = "#id_%s_add" % field_name
+        choose_all_button = "#id_%s_add_all" % field_name
+        remove_button = "#id_%s_remove" % field_name
+        remove_all_button = "#id_%s_remove_all" % field_name
+        self.assertEqual(
+            self.page.locator(choose_button).is_disabled(), choose_btn_disabled
+        )
+        self.assertEqual(
+            self.page.locator(remove_button).is_disabled(), remove_btn_disabled
+        )
+        if mode == "horizontal":
+            self.assertEqual(
+                self.page.locator(choose_all_button).is_disabled(),
+                choose_all_btn_disabled,
+            )
+            self.assertEqual(
+                self.page.locator(remove_all_button).is_disabled(),
+                remove_all_btn_disabled,
+            )
+
+    def execute_basic_operations(self, mode, field_name):
+        original_url = self.page.url
+
+        from_box = "#id_%s_from" % field_name
+        to_box = "#id_%s_to" % field_name
+        choose_button = "#id_%s_add" % field_name
+        choose_all_button = "#id_%s_add_all" % field_name
+        remove_button = "#id_%s_remove" % field_name
+        remove_all_button = "#id_%s_remove_all" % field_name
+
+        # Initial positions ---------------------------------------------------
+        self.assertSelectOptions(
+            from_box,
+            [
+                str(self.arthur.id),
+                str(self.bob.id),
+                str(self.cliff.id),
+                str(self.jason.id),
+                str(self.jenny.id),
+                str(self.john.id),
+            ],
+        )
+        self.assertSelectOptions(to_box, [str(self.lisa.id), str(self.peter.id)])
+        self.assertButtonsDisabled(
+            mode,
+            field_name,
+            choose_btn_disabled=True,
+            remove_btn_disabled=True,
+            choose_all_btn_disabled=False,
+            remove_all_btn_disabled=False,
+        )
+
+        # Click 'Choose all' --------------------------------------------------
+        if mode == "horizontal":
+            self.page.locator(choose_all_button).click()
+        elif mode == "vertical":
+            # There's no 'Choose all' button in vertical mode, so individually
+            # select all options and click 'Choose'.
+            all_values = [
+                opt.get_attribute("value")
+                for opt in self.page.locator(f"{from_box} > option").all()
+            ]
+            self.page.locator(from_box).select_option(value=all_values)
+            self.page.locator(choose_button).click()
+        self.assertSelectOptions(from_box, [])
+        self.assertSelectOptions(
+            to_box,
+            [
+                str(self.lisa.id),
+                str(self.peter.id),
+                str(self.arthur.id),
+                str(self.bob.id),
+                str(self.cliff.id),
+                str(self.jason.id),
+                str(self.jenny.id),
+                str(self.john.id),
+            ],
+        )
+        self.assertButtonsDisabled(
+            mode,
+            field_name,
+            choose_btn_disabled=True,
+            remove_btn_disabled=True,
+            choose_all_btn_disabled=True,
+            remove_all_btn_disabled=False,
+        )
+
+        # Click 'Remove all' --------------------------------------------------
+        if mode == "horizontal":
+            self.page.locator(remove_all_button).click()
+        elif mode == "vertical":
+            # There's no 'Remove all' button in vertical mode, so individually
+            # select all options and click 'Remove'.
+            all_values = [
+                opt.get_attribute("value")
+                for opt in self.page.locator(f"{to_box} > option").all()
+            ]
+            self.page.locator(to_box).select_option(value=all_values)
+            self.page.locator(remove_button).click()
+        self.assertSelectOptions(
+            from_box,
+            [
+                str(self.lisa.id),
+                str(self.peter.id),
+                str(self.arthur.id),
+                str(self.bob.id),
+                str(self.cliff.id),
+                str(self.jason.id),
+                str(self.jenny.id),
+                str(self.john.id),
+            ],
+        )
+        self.assertSelectOptions(to_box, [])
+        self.assertButtonsDisabled(
+            mode,
+            field_name,
+            choose_btn_disabled=True,
+            remove_btn_disabled=True,
+            choose_all_btn_disabled=False,
+            remove_all_btn_disabled=True,
+        )
+
+        # Choose some options ------------------------------------------------
+        from_lisa_option = self.page.locator(
+            '{} > option[value="{}"]'.format(from_box, self.lisa.id)
+        )
+
+        # Check the title attribute is there for tool tips: ticket #20821
+        self.assertEqual(
+            from_lisa_option.get_attribute("title"),
+            from_lisa_option.inner_text(),
+        )
+
+        self.page.locator(from_box).select_option(
+            value=[
+                str(self.lisa.id),
+                str(self.jason.id),
+                str(self.bob.id),
+                str(self.john.id),
+            ]
+        )
+        self.assertButtonsDisabled(
+            mode,
+            field_name,
+            choose_btn_disabled=False,
+            remove_btn_disabled=True,
+            choose_all_btn_disabled=False,
+            remove_all_btn_disabled=True,
+        )
+        self.page.locator(choose_button).click()
+        self.assertButtonsDisabled(
+            mode,
+            field_name,
+            choose_btn_disabled=True,
+            remove_btn_disabled=True,
+            choose_all_btn_disabled=False,
+            remove_all_btn_disabled=False,
+        )
+
+        self.assertSelectOptions(
+            from_box,
+            [
+                str(self.peter.id),
+                str(self.arthur.id),
+                str(self.cliff.id),
+                str(self.jenny.id),
+            ],
+        )
+        self.assertSelectOptions(
+            to_box,
+            [
+                str(self.lisa.id),
+                str(self.bob.id),
+                str(self.jason.id),
+                str(self.john.id),
+            ],
+        )
+
+        # Check the tooltip is still there after moving: ticket #20821
+        to_lisa_option = self.page.locator(
+            '{} > option[value="{}"]'.format(to_box, self.lisa.id)
+        )
+        self.assertEqual(
+            to_lisa_option.get_attribute("title"),
+            to_lisa_option.inner_text(),
+        )
+
+        # Remove some options -------------------------------------------------
+        self.page.locator(to_box).select_option(
+            value=[str(self.lisa.id), str(self.bob.id)]
+        )
+        self.assertButtonsDisabled(
+            mode,
+            field_name,
+            choose_btn_disabled=True,
+            remove_btn_disabled=False,
+            choose_all_btn_disabled=False,
+            remove_all_btn_disabled=False,
+        )
+        self.page.locator(remove_button).click()
+        self.assertButtonsDisabled(
+            mode,
+            field_name,
+            choose_btn_disabled=True,
+            remove_btn_disabled=True,
+            choose_all_btn_disabled=False,
+            remove_all_btn_disabled=False,
+        )
+
+        self.assertSelectOptions(
+            from_box,
+            [
+                str(self.peter.id),
+                str(self.arthur.id),
+                str(self.cliff.id),
+                str(self.jenny.id),
+                str(self.lisa.id),
+                str(self.bob.id),
+            ],
+        )
+        self.assertSelectOptions(to_box, [str(self.jason.id), str(self.john.id)])
+
+        # Choose some more options --------------------------------------------
+        self.page.locator(from_box).select_option(
+            value=[str(self.arthur.id), str(self.cliff.id)]
+        )
+        self.page.locator(choose_button).click()
+
+        self.assertSelectOptions(
+            from_box,
+            [
+                str(self.peter.id),
+                str(self.jenny.id),
+                str(self.lisa.id),
+                str(self.bob.id),
+            ],
+        )
+        self.assertSelectOptions(
+            to_box,
+            [
+                str(self.jason.id),
+                str(self.john.id),
+                str(self.arthur.id),
+                str(self.cliff.id),
+            ],
+        )
+
+        # Choose some more options --------------------------------------------
+        self.page.locator(from_box).select_option(
+            value=[str(self.peter.id), str(self.lisa.id)]
+        )
+
+        # Confirm they're selected after clicking inactive buttons: ticket
+        # #26575
+        self.assertSelectedOptions(from_box, [str(self.peter.id), str(self.lisa.id)])
+        self.page.locator(remove_button).click(force=True)
+        self.assertSelectedOptions(from_box, [str(self.peter.id), str(self.lisa.id)])
+
+        # Unselect the options ------------------------------------------------
+        self.deselect_option(from_box, str(self.peter.id))
+        self.deselect_option(from_box, str(self.lisa.id))
+
+        # Choose some more options --------------------------------------------
+        self.page.locator(to_box).select_option(
+            value=[str(self.jason.id), str(self.john.id)]
+        )
+
+        # Confirm they're selected after clicking inactive buttons: ticket
+        # #26575
+        self.assertSelectedOptions(to_box, [str(self.jason.id), str(self.john.id)])
+        self.page.locator(choose_button).click(force=True)
+        self.assertSelectedOptions(to_box, [str(self.jason.id), str(self.john.id)])
+
+        # Unselect the options ------------------------------------------------
+        self.deselect_option(to_box, str(self.jason.id))
+        self.deselect_option(to_box, str(self.john.id))
+
+        # Pressing buttons shouldn't change the URL.
+        self.assertEqual(self.page.url, original_url)
+
+    def test_basic(self):
+        self.school.students.set([self.lisa, self.peter])
+        self.school.alumni.set([self.lisa, self.peter])
+
+        with self.small_screen_size():
+            self.admin_login(username="super", password="secret", login_url="/")
+            self.page.goto(
+                self.live_server_url
+                + reverse("admin:admin_widgets_school_change", args=(self.school.id,))
+            )
+
+            self.trigger_resize()
+            self.execute_basic_operations("vertical", "students")
+            self.execute_basic_operations("horizontal", "alumni")
+
+            # Save, everything should be stored properly stored in the
+            # database.
+            self.page.locator('input[value="Save"]').click()
+            self.page.wait_for_load_state("load")
+        self.school = School.objects.get(id=self.school.id)  # Reload from database
+        self.assertEqual(
+            list(self.school.students.all()),
+            [self.arthur, self.cliff, self.jason, self.john],
+        )
+        self.assertEqual(
+            list(self.school.alumni.all()),
+            [self.arthur, self.cliff, self.jason, self.john],
+        )
+
+    def test_filter(self):
+        """
+        Typing in the search box filters out options displayed in the 'from'
+        box.
+        """
+        self.school.students.set([self.lisa, self.peter])
+        self.school.alumni.set([self.lisa, self.peter])
+
+        with self.small_screen_size():
+            self.admin_login(username="super", password="secret", login_url="/")
+            self.page.goto(
+                self.live_server_url
+                + reverse("admin:admin_widgets_school_change", args=(self.school.id,))
+            )
+
+            for field_name in ["students", "alumni"]:
+                from_box = "#id_%s_from" % field_name
+                to_box = "#id_%s_to" % field_name
+                choose_link = "#id_%s_add" % field_name
+                remove_link = "#id_%s_remove" % field_name
+                input = self.page.locator("#id_%s_input" % field_name)
+                # Initial values.
+                self.assertSelectOptions(
+                    from_box,
+                    [
+                        str(self.arthur.id),
+                        str(self.bob.id),
+                        str(self.cliff.id),
+                        str(self.jason.id),
+                        str(self.jenny.id),
+                        str(self.john.id),
+                    ],
+                )
+                # Typing in some characters filters out non-matching options.
+                input.press("a")
+                self.assertSelectOptions(
+                    from_box, [str(self.arthur.id), str(self.jason.id)]
+                )
+                input.press("R")
+                self.assertSelectOptions(from_box, [str(self.arthur.id)])
+                # Clearing the text box makes the other options reappear.
+                input.press("Backspace")
+                self.assertSelectOptions(
+                    from_box, [str(self.arthur.id), str(self.jason.id)]
+                )
+                input.press("Backspace")
+                self.assertSelectOptions(
+                    from_box,
+                    [
+                        str(self.arthur.id),
+                        str(self.bob.id),
+                        str(self.cliff.id),
+                        str(self.jason.id),
+                        str(self.jenny.id),
+                        str(self.john.id),
+                    ],
+                )
+
+                # Choosing a filtered option sends it properly to the 'to' box.
+                input.press("a")
+                self.assertSelectOptions(
+                    from_box, [str(self.arthur.id), str(self.jason.id)]
+                )
+                self.page.locator(from_box).select_option(value=str(self.jason.id))
+                self.page.locator(choose_link).click()
+                self.assertSelectOptions(from_box, [str(self.arthur.id)])
+                self.assertSelectOptions(
+                    to_box,
+                    [
+                        str(self.lisa.id),
+                        str(self.peter.id),
+                        str(self.jason.id),
+                    ],
+                )
+
+                self.page.locator(to_box).select_option(value=str(self.lisa.id))
+                self.page.locator(remove_link).click()
+                self.assertSelectOptions(
+                    from_box, [str(self.arthur.id), str(self.lisa.id)]
+                )
+                self.assertSelectOptions(
+                    to_box, [str(self.peter.id), str(self.jason.id)]
+                )
+
+                input.fill("")  # Clear text box
+                self.assertSelectOptions(
+                    from_box,
+                    [
+                        str(self.arthur.id),
+                        str(self.bob.id),
+                        str(self.cliff.id),
+                        str(self.jenny.id),
+                        str(self.john.id),
+                        str(self.lisa.id),
+                    ],
+                )
+                self.assertSelectOptions(
+                    to_box, [str(self.peter.id), str(self.jason.id)]
+                )
+
+                # Pressing enter on a filtered option sends it properly to
+                # the 'to' box.
+                self.page.locator(to_box).select_option(value=str(self.jason.id))
+                self.page.locator(remove_link).click()
+                input.press_sequentially("ja")
+                self.assertSelectOptions(from_box, [str(self.jason.id)])
+                input.press("Enter")
+                self.assertSelectOptions(
+                    to_box, [str(self.peter.id), str(self.jason.id)]
+                )
+                input.fill("")
+
+            # Save, everything should be stored properly in the database.
+            self.page.locator('input[value="Save"]').click()
+            self.page.wait_for_load_state("load")
+        self.school = School.objects.get(id=self.school.id)  # Reload from database
+        self.assertEqual(list(self.school.students.all()), [self.jason, self.peter])
+        self.assertEqual(list(self.school.alumni.all()), [self.jason, self.peter])
+
+    def test_back_button_bug(self):
+        """
+        Some browsers had a bug where navigating away from the change page
+        and then clicking the browser's back button would clear the
+        filter_horizontal/filter_vertical widgets (#13614).
+        """
+        self.school.students.set([self.lisa, self.peter])
+        self.school.alumni.set([self.lisa, self.peter])
+        self.admin_login(username="super", password="secret", login_url="/")
+        change_url = reverse(
+            "admin:admin_widgets_school_change", args=(self.school.id,)
+        )
+        self.page.goto(self.live_server_url + change_url)
+        # Navigate away and go back to the change form page.
+        self.page.get_by_role("link", name="Home").click()
+        self.page.go_back()
+        expected_unselected_values = [
+            str(self.arthur.id),
+            str(self.bob.id),
+            str(self.cliff.id),
+            str(self.jason.id),
+            str(self.jenny.id),
+            str(self.john.id),
+        ]
+        expected_selected_values = [str(self.lisa.id), str(self.peter.id)]
+        # Everything is still in place
+        self.assertSelectOptions("#id_students_from", expected_unselected_values)
+        self.assertSelectOptions("#id_students_to", expected_selected_values)
+        self.assertSelectOptions("#id_alumni_from", expected_unselected_values)
+        self.assertSelectOptions("#id_alumni_to", expected_selected_values)
+
+    def test_refresh_page(self):
+        """
+        Horizontal and vertical filter widgets keep selected options on page
+        reload (#22955).
+        """
+        self.school.students.add(self.arthur, self.jason)
+        self.school.alumni.add(self.arthur, self.jason)
+
+        self.admin_login(username="super", password="secret", login_url="/")
+        change_url = reverse(
+            "admin:admin_widgets_school_change", args=(self.school.id,)
+        )
+        self.page.goto(self.live_server_url + change_url)
+
+        self.assertCountPlaywrightElements("#id_students_to > option", 2)
+
+        self.page.reload()
+        self.page.wait_for_load_state("load")
+
+        self.assertCountPlaywrightElements("#id_students_to > option", 2)
+
+    def test_form_submission_via_enter_key_with_filter_horizontal(self):
+        """
+        The main form can be submitted correctly by pressing the enter key.
+        There is no shadowing from other buttons inside the form.
+        """
+        self.school.students.set([self.peter])
+        self.school.alumni.set([self.lisa])
+
+        self.admin_login(username="super", password="secret", login_url="/")
+        self.page.goto(
+            self.live_server_url
+            + reverse("admin:admin_widgets_school_change", args=(self.school.id,))
+        )
+
+        self.page.locator("#id_students_from").select_option(value=str(self.lisa.id))
+        self.page.locator("#id_students_add").click()
+        self.page.locator("#id_alumni_from").select_option(value=str(self.peter.id))
+        self.page.locator("#id_alumni_add").click()
+
+        # Trigger form submission via Enter key on a text input field.
+        name_input = self.page.locator("#id_name")
+        name_input.click()
+        name_input.press("Enter")
+
+        # Form was submitted, success message should be shown.
+        success = self.page.locator("li.success")
+        self.assertIn("was changed successfully.", success.inner_text())
+
+        # Changes should be stored properly in the database.
+        school = School.objects.get(id=self.school.id)
+        self.assertSequenceEqual(
+            school.students.all().order_by("name"), [self.lisa, self.peter]
+        )
+        self.assertSequenceEqual(
+            school.alumni.all().order_by("name"), [self.lisa, self.peter]
+        )
+
+
 class AdminRawIdWidgetSeleniumTests(AdminWidgetSeleniumTestCase):
     def setUp(self):
         super().setUp()
@@ -1956,6 +2720,91 @@ class AdminRawIdWidgetSeleniumTests(AdminWidgetSeleniumTestCase):
         )
 
 
+class AdminRawIdWidgetPlaywrightTests(AdminWidgetPlaywrightTestCase):
+    def setUp(self):
+        super().setUp()
+        self.blues = Band.objects.create(name="Bogey Blues")
+        self.potatoes = Band.objects.create(name="Green Potatoes")
+
+    @playwright_screenshot_cases(
+        ["desktop_size", "mobile_size", "rtl", "dark", "high_contrast"]
+    )
+    def test_ForeignKey(self):
+        self.admin_login(username="super", password="secret", login_url="/")
+        self.page.goto(self.live_server_url + reverse("admin:admin_widgets_event_add"))
+        self.take_screenshot("raw_id_widget")
+
+        main_band_input = self.page.locator("#id_main_band")
+
+        # No value has been selected yet.
+        self.assertEqual(main_band_input.input_value(), "")
+
+        # Open the popup window and click on a band.
+        with self.page.expect_popup() as popup_info:
+            self.page.locator("#lookup_id_main_band").click()
+        popup = popup_info.value
+        link = popup.get_by_role("link", name="Bogey Blues")
+        self.assertIn(f"/band/{self.blues.pk}/", link.get_attribute("href"))
+        popup.pause()
+        with popup.expect_event("close"):
+            link.click()
+
+        # The field now contains the selected band's id.
+        self.assertEqual(main_band_input.input_value(), str(self.blues.pk))
+
+        # Reopen the popup window and click on another band.
+        with self.page.expect_popup() as popup_info:
+            self.page.locator("#lookup_id_main_band").click()
+        popup = popup_info.value
+        link = popup.get_by_role("link", name="Green Potatoes")
+        self.assertIn(f"/band/{self.potatoes.pk}/", link.get_attribute("href"))
+        with popup.expect_event("close"):
+            link.click()
+
+        # The field now contains the other selected band's id.
+        self.assertEqual(main_band_input.input_value(), str(self.potatoes.pk))
+
+    def test_many_to_many(self):
+        self.admin_login(username="super", password="secret", login_url="/")
+        self.page.goto(self.live_server_url + reverse("admin:admin_widgets_event_add"))
+
+        supporting_bands_input = self.page.locator("#id_supporting_bands")
+
+        # No value has been selected yet.
+        self.assertEqual(supporting_bands_input.input_value(), "")
+
+        # Help text for the field is displayed.
+        help_text = self.page.locator(".field-supporting_bands div.help")
+        self.assertEqual(help_text.inner_text(), "Supporting Bands.")
+
+        # Open the popup window and click on a band.
+        with self.page.expect_popup() as popup_info:
+            self.page.locator("#lookup_id_supporting_bands").click()
+        popup = popup_info.value
+        link = popup.get_by_role("link", name="Bogey Blues")
+        self.assertIn(f"/band/{self.blues.pk}/", link.get_attribute("href"))
+        with popup.expect_event("close"):
+            link.click()
+
+        # The field now contains the selected band's id.
+        self.assertEqual(supporting_bands_input.input_value(), str(self.blues.pk))
+
+        # Reopen the popup window and click on another band.
+        with self.page.expect_popup() as popup_info:
+            self.page.locator("#lookup_id_supporting_bands").click()
+        popup = popup_info.value
+        link = popup.get_by_role("link", name="Green Potatoes")
+        self.assertIn(f"/band/{self.potatoes.pk}/", link.get_attribute("href"))
+        with popup.expect_event("close"):
+            link.click()
+
+        # The field now contains the two selected bands' ids.
+        self.assertEqual(
+            supporting_bands_input.input_value(),
+            f"{self.blues.pk},{self.potatoes.pk}",
+        )
+
+
 class RelatedFieldWidgetSeleniumTests(AdminWidgetSeleniumTestCase):
     def test_ForeignKey_using_to_field(self):
         from selenium.webdriver import ActionChains
@@ -2023,6 +2872,67 @@ class RelatedFieldWidgetSeleniumTests(AdminWidgetSeleniumTestCase):
         self.selenium.find_element(By.CSS_SELECTOR, save_button_css_selector).click()
         self.wait_for_text(
             "li.success", "The profile “changednewuser” was added successfully."
+        )
+        profiles = Profile.objects.all()
+        self.assertEqual(len(profiles), 1)
+        self.assertEqual(profiles[0].user.username, username_value)
+
+
+class RelatedFieldWidgetPlaywrightTests(AdminWidgetPlaywrightTestCase):
+    def test_ForeignKey_using_to_field(self):
+        self.admin_login(username="super", password="secret", login_url="/")
+        self.page.goto(
+            self.live_server_url + reverse("admin:admin_widgets_profile_add")
+        )
+
+        # Click the Add User button to add new
+        with self.page.expect_popup() as popup_info:
+            self.page.locator("#add_id_user").click()
+        popup = popup_info.value
+        popup.locator("#id_password").fill("password")
+
+        username_value = "newuser"
+        popup.locator("#id_username").fill(username_value)
+
+        save_button_css_selector = ".submit-row > input[type=submit]"
+        with popup.expect_event("close"):
+            popup.locator(save_button_css_selector).click()
+
+        # The field now contains the new user
+        self.page.locator("#view_id_user").click()
+        self.assertEqual(self.page.locator("#id_username").input_value(), "newuser")
+        self.page.go_back()
+
+        # Chrome and Safari don't update related object links when selecting
+        # the same option as previously submitted. As a consequence, the
+        # "pencil" and "eye" buttons remain disable, so select
+        # "- Select an option -" first.
+        self.page.locator("#id_user").select_option(index=0)
+        self.page.locator("#id_user").select_option(value="newuser")
+        # Click the Change User button to change it
+        with self.page.expect_popup() as popup_info:
+            self.page.locator("#change_id_user").click()
+        popup = popup_info.value
+
+        username_value = "changednewuser"
+        popup.locator("#id_username").fill(username_value)
+
+        with popup.expect_event("close"):
+            popup.locator(save_button_css_selector).click()
+
+        # The field now contains the changed user
+        self.page.locator("#view_id_user").click()
+        self.assertEqual(
+            self.page.locator("#id_username").input_value(), "changednewuser"
+        )
+        self.page.go_back()
+
+        self.page.locator("#id_user").select_option(value="changednewuser")
+        # Go ahead and submit the form to make sure it works
+        self.page.locator("input[name='_save']").click()
+        self.assertEqual(
+            self.page.locator("li.success").inner_text(),
+            "The profile “changednewuser” was added successfully.",
         )
         profiles = Profile.objects.all()
         self.assertEqual(len(profiles), 1)
@@ -2117,5 +3027,80 @@ class ImageFieldWidgetsSeleniumTests(AdminWidgetSeleniumTestCase):
         # "Clear" persists checked.
         self.assertIs(
             self.selenium.find_element(By.ID, self.clear_checkbox_id).is_selected(),
+            True,
+        )
+
+
+@skipUnless(Image, "Pillow not installed")
+class ImageFieldWidgetsPlaywrightTests(AdminWidgetPlaywrightTestCase):
+    name_input_id = "id_name"
+    photo_input_id = "id_photo"
+    tests_files_folder = "%s/files" % Path(__file__).parent.parent
+    clear_checkbox_id = "photo-clear_id"
+
+    def _run_image_upload_path(self):
+        self.admin_login(username="super", password="secret", login_url="/")
+        self.page.goto(
+            self.live_server_url + reverse("admin:admin_widgets_student_add"),
+        )
+        # Add a student.
+        self.page.locator(f"#{self.name_input_id}").fill("Joe Doe")
+        self.page.locator(f"#{self.photo_input_id}").set_input_files(
+            f"{self.tests_files_folder}/test.png"
+        )
+        self.page.locator("input[value='Save and continue editing']").click()
+        self.page.wait_for_load_state("load")
+        student = Student.objects.last()
+        self.assertEqual(student.name, "Joe Doe")
+        self.assertRegex(student.photo.name, r"^photos\/(test|test_.+).png")
+
+    def test_clearablefileinput_widget(self):
+        self._run_image_upload_path()
+        self.page.locator(f"#{self.clear_checkbox_id}").click()
+        self.page.locator("input[value='Save and continue editing']").click()
+        student = Student.objects.last()
+        self.assertEqual(student.name, "Joe Doe")
+        self.assertEqual(student.photo.name, "")
+        # "Currently" with "Clear" checkbox and "Change" are not shown.
+        photo_field_row = self.page.locator(".field-photo")
+        self.assertNotIn("Currently", photo_field_row.inner_text())
+        self.assertNotIn("Change", photo_field_row.inner_text())
+
+    def test_clearablefileinput_widget_invalid_file(self):
+        self._run_image_upload_path()
+        self.page.locator(f"#{self.photo_input_id}").set_input_files(
+            f"{self.tests_files_folder}/brokenimg.png"
+        )
+        self.page.locator("input[value='Save and continue editing']").click()
+        self.assertEqual(
+            self.page.locator(".errorlist li").inner_text(),
+            (
+                "Upload a valid image. The file you uploaded was either not an image "
+                "or a corrupted image."
+            ),
+        )
+        # "Currently" with "Clear" checkbox and "Change" still shown.
+        photo_field_row = self.page.locator(".field-photo")
+        self.assertIn("Currently", photo_field_row.inner_text())
+        self.assertIn("Change", photo_field_row.inner_text())
+
+    def test_clearablefileinput_widget_preserve_clear_checkbox(self):
+        self._run_image_upload_path()
+        # "Clear" is not checked by default.
+        self.assertIs(
+            self.page.locator(f"#{self.clear_checkbox_id}").is_checked(),
+            False,
+        )
+        # "Clear" was checked, but a validation error is raised.
+        self.page.locator(f"#{self.name_input_id}").clear()
+        self.page.locator(f"#{self.clear_checkbox_id}").click()
+        self.page.locator("input[value='Save and continue editing']").click()
+        self.assertEqual(
+            self.page.locator(".errorlist li").inner_text(),
+            "This field is required.",
+        )
+        # "Clear" persists checked.
+        self.assertIs(
+            self.page.locator(f"#{self.clear_checkbox_id}").is_checked(),
             True,
         )

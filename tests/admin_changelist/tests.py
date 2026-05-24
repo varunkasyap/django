@@ -5,7 +5,7 @@ from django.contrib import admin
 from django.contrib.admin.models import LogEntry
 from django.contrib.admin.options import IncorrectLookupParameters
 from django.contrib.admin.templatetags.admin_list import pagination
-from django.contrib.admin.tests import AdminSeleniumTestCase
+from django.contrib.admin.tests import AdminPlaywrightTestCase, AdminSeleniumTestCase
 from django.contrib.admin.views.main import (
     ALL_VAR,
     IS_FACETS_VAR,
@@ -2233,3 +2233,69 @@ class SeleniumTests(AdminSeleniumTestCase):
                     GrandChild.objects.all().order_by(*ordering)
                 )
                 self.assertEqual(find_result_row_texts(), expected)
+
+
+@override_settings(ROOT_URLCONF="admin_changelist.urls")
+class PlaywrightTests(AdminPlaywrightTestCase):
+    available_apps = ["admin_changelist"] + AdminSeleniumTestCase.available_apps
+
+    def setUp(self):
+        User.objects.create_superuser(username="super", password="secret", email=None)
+
+    def test_actions_warn_on_pending_edits(self):
+        Parent.objects.create(name="foo")
+        self.admin_login(username="super", password="secret")
+        self.page.goto(
+            self.live_server_url + reverse("admin:admin_changelist_parent_changelist")
+        )
+
+        self.page.locator("#id_form-0-name").fill("bar")
+        self.page.locator("#action-toggle").click()
+
+        self.page.once("dialog", lambda dialog: dialog.dismiss())
+        with self.page.expect_event("dialog") as dialog_info:
+            self.page.locator('[name="index"]').first.click()
+        self.assertEqual(
+            dialog_info.value.message,
+            "You have unsaved changes on individual editable fields. If you "
+            "run an action, your unsaved changes will be lost.",
+        )
+
+    def test_save_with_changes_warns_on_pending_action(self):
+        Parent.objects.create(name="parent")
+        self.admin_login(username="super", password="secret")
+        self.page.goto(
+            self.live_server_url + reverse("admin:admin_changelist_parent_changelist")
+        )
+
+        self.page.locator("#id_form-0-name").fill("other name")
+        self.page.locator('[name="action"]').first.select_option("delete_selected")
+
+        self.page.once("dialog", lambda dialog: dialog.dismiss())
+        with self.page.expect_event("dialog") as dialog_info:
+            self.page.locator('[name="_save"]').first.click()
+        self.assertEqual(
+            dialog_info.value.message,
+            "You have selected an action, but you haven’t saved your "
+            "changes to individual fields yet. Please click OK to save. "
+            "You’ll need to re-run the action.",
+        )
+
+    def test_save_without_changes_warns_on_pending_action(self):
+        Parent.objects.create(name="parent")
+        self.admin_login(username="super", password="secret")
+        self.page.goto(
+            self.live_server_url + reverse("admin:admin_changelist_parent_changelist")
+        )
+
+        self.page.locator('[name="action"]').first.select_option("delete_selected")
+
+        self.page.once("dialog", lambda dialog: dialog.dismiss())
+        with self.page.expect_event("dialog") as dialog_info:
+            self.page.locator('[name="_save"]').first.click()
+        self.assertEqual(
+            dialog_info.value.message,
+            "You have selected an action, and you haven’t made any "
+            "changes on individual fields. You’re probably looking for "
+            "the Run button rather than the Save button.",
+        )

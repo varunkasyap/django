@@ -1,5 +1,5 @@
 from django.contrib import admin
-from django.contrib.admin.tests import AdminSeleniumTestCase
+from django.contrib.admin.tests import AdminPlaywrightTestCase, AdminSeleniumTestCase
 from django.contrib.auth.models import User
 from django.test import TestCase, override_settings
 from django.urls import path, reverse
@@ -231,3 +231,97 @@ class SeleniumTests(AdminSeleniumTestCase):
         filter_input = self.selenium.find_element(By.CSS_SELECTOR, "#nav-filter")
         filter_input.send_keys("users")
         self.assertEqual(self.selenium.execute_script(filter_value_script), "users")
+
+
+@override_settings(ROOT_URLCONF="admin_views.test_nav_sidebar")
+class PlaywrightTests(AdminPlaywrightTestCase):
+    available_apps = ["admin_views"] + AdminPlaywrightTestCase.available_apps
+
+    def setUp(self):
+        self.superuser = User.objects.create_superuser(
+            username="super",
+            password="secret",
+            email="super@example.com",
+        )
+        self.admin_login(
+            username="super",
+            password="secret",
+            login_url=reverse("test_with_sidebar:index"),
+        )
+        self.page.evaluate("localStorage.removeItem('django.admin.navSidebarIsOpen')")
+
+    def test_sidebar_starts_open(self):
+        self.page.goto(
+            self.live_server_url + reverse("test_with_sidebar:auth_user_changelist")
+        )
+        main_element = self.page.locator("#main")
+        self.assertIn("shifted", main_element.get_attribute("class").split())
+
+    def test_sidebar_can_be_closed(self):
+        self.page.goto(
+            self.live_server_url + reverse("test_with_sidebar:auth_user_changelist")
+        )
+        toggle_button = self.page.locator("#toggle-nav-sidebar")
+        self.assertEqual(
+            toggle_button.evaluate("el => el.tagName.toLowerCase()"), "button"
+        )
+        self.assertEqual(toggle_button.get_attribute("aria-label"), "Toggle navigation")
+        nav_sidebar = self.page.locator("#nav-sidebar")
+        self.assertEqual(nav_sidebar.get_attribute("aria-expanded"), "true")
+        self.assertTrue(nav_sidebar.is_visible())
+        toggle_button.click()
+
+        # Hidden sidebar is not visible.
+        self.assertEqual(nav_sidebar.get_attribute("aria-expanded"), "false")
+        self.assertFalse(nav_sidebar.is_visible())
+        main_element = self.page.locator("#main")
+        self.assertNotIn("shifted", main_element.get_attribute("class").split())
+
+    def test_sidebar_state_persists(self):
+        self.page.goto(
+            self.live_server_url + reverse("test_with_sidebar:auth_user_changelist")
+        )
+        self.assertIsNone(
+            self.page.evaluate("localStorage.getItem('django.admin.navSidebarIsOpen')")
+        )
+        toggle_button = self.page.locator("#toggle-nav-sidebar")
+        toggle_button.click()
+        self.assertEqual(
+            self.page.evaluate("localStorage.getItem('django.admin.navSidebarIsOpen')"),
+            "false",
+        )
+        self.page.goto(
+            self.live_server_url + reverse("test_with_sidebar:auth_user_changelist")
+        )
+        main_element = self.page.locator("#main")
+        self.assertNotIn("shifted", main_element.get_attribute("class").split())
+
+        toggle_button = self.page.locator("#toggle-nav-sidebar")
+        # Hidden sidebar is not visible.
+        nav_sidebar = self.page.locator("#nav-sidebar")
+        self.assertEqual(nav_sidebar.get_attribute("aria-expanded"), "false")
+        self.assertFalse(nav_sidebar.is_visible())
+        toggle_button.click()
+        self.assertEqual(nav_sidebar.get_attribute("aria-expanded"), "true")
+        self.assertTrue(nav_sidebar.is_visible())
+        self.assertEqual(
+            self.page.evaluate("localStorage.getItem('django.admin.navSidebarIsOpen')"),
+            "true",
+        )
+        self.page.goto(
+            self.live_server_url + reverse("test_with_sidebar:auth_user_changelist")
+        )
+        main_element = self.page.locator("#main")
+        self.assertIn("shifted", main_element.get_attribute("class").split())
+
+    def test_sidebar_filter_persists(self):
+        self.page.goto(
+            self.live_server_url + reverse("test_with_sidebar:auth_user_changelist")
+        )
+        filter_value_script = (
+            "sessionStorage.getItem('django.admin.navSidebarFilterValue')"
+        )
+        self.assertIsNone(self.page.evaluate(filter_value_script))
+        filter_input = self.page.locator("#nav-filter")
+        filter_input.fill("users")
+        self.assertEqual(self.page.evaluate(filter_value_script), "users")

@@ -15,7 +15,7 @@ from django.contrib.admin.helpers import ACTION_CHECKBOX_NAME
 from django.contrib.admin.models import ADDITION, DELETION, LogEntry
 from django.contrib.admin.options import SOURCE_MODEL_VAR, TO_FIELD_VAR
 from django.contrib.admin.templatetags.admin_urls import add_preserved_filters
-from django.contrib.admin.tests import AdminSeleniumTestCase
+from django.contrib.admin.tests import AdminPlaywrightTestCase, AdminSeleniumTestCase
 from django.contrib.admin.utils import quote
 from django.contrib.admin.views.main import IS_POPUP_VAR
 from django.contrib.auth import REDIRECT_FIELD_NAME, get_permission_codename
@@ -9819,3 +9819,32 @@ class AdminSiteFinalCatchAllPatternTests(TestCase):
         response = self.client.get(unknown_url)
         # Does not redirect to the admin login.
         self.assertEqual(response.status_code, 404)
+
+
+@override_settings(ROOT_URLCONF="admin_views.urls")
+class PlaywrightTests(AdminPlaywrightTestCase):
+    available_apps = ["admin_views"] + AdminPlaywrightTestCase.available_apps
+
+    def setUp(self):
+        self.superuser = User.objects.create_superuser(
+            username="super", password="secret", email="super@example.com"
+        )
+
+    def test_inline_uuid_pk_add_with_popup(self):
+        self.admin_login(
+            username="super", password="secret", login_url=reverse("admin:index")
+        )
+        self.page.goto(
+            self.live_server_url
+            + reverse("admin:admin_views_relatedwithuuidpkmodel_add")
+        )
+        with self.page.expect_popup() as popup_info:
+            self.page.locator("#add_id_parent").click()
+        popup = popup_info.value
+        popup.locator("#id_title").fill("test")
+        with popup.expect_event("close"):
+            popup.locator('input[value="Save"]').click()
+        uuid_id = str(ParentWithUUIDPK.objects.first().id)
+        selected_option = self.page.locator("#id_parent option:checked")
+        self.assertEqual(selected_option.inner_text(), uuid_id)
+        self.assertEqual(selected_option.get_attribute("value"), uuid_id)
