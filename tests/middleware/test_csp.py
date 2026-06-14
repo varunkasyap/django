@@ -4,6 +4,7 @@ from utils_tests.test_csp import basic_config, basic_policy
 
 from django.contrib.staticfiles.testing import StaticLiveServerTestCase
 from django.test import SimpleTestCase
+from django.test.playwright import PlaywrightTestCase
 from django.test.selenium import SeleniumTestCase
 from django.test.utils import modify_settings, override_settings
 from django.utils.csp import CSP
@@ -192,6 +193,30 @@ class CSPSeleniumTestCase(SeleniumTestCase, StaticLiveServerTestCase):
         url = self.live_server_url + "/csp-failure/"
         self.selenium.get(url)
         time.sleep(1)  # Allow time for the CSP report to be sent.
+        reports = sorted(
+            (r["csp-report"]["document-uri"], r["csp-report"]["violated-directive"])
+            for r in csp_reports
+        )
+        self.assertEqual(reports, [(url, "style-src-elem")])
+
+
+@override_settings(
+    ROOT_URLCONF="middleware.urls",
+)
+@modify_settings(
+    MIDDLEWARE={"append": "django.middleware.csp.ContentSecurityPolicyMiddleware"}
+)
+class CSPPlaywrightTestCase(PlaywrightTestCase, StaticLiveServerTestCase):
+    available_apps = ["middleware"]
+
+    def setUp(self):
+        self.addCleanup(csp_reports.clear)
+        super().setUp()
+
+    def test_reports_are_generated(self):
+        url = self.live_server_url + "/csp-failure/"
+        self.page.goto(url)
+        self.page.wait_for_timeout(1000)  # Allow time for the CSP report to be sent.
         reports = sorted(
             (r["csp-report"]["document-uri"], r["csp-report"]["violated-directive"])
             for r in csp_reports
