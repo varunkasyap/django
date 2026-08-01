@@ -2082,59 +2082,256 @@ class PlaywrightTests(AdminPlaywrightTestCase):
             "the Run button rather than the Save button.",
         )
 
+    def _debug_filter_state(self, label):
+        """Temporary debug helper for flaky collapse-filter tests. Remove later."""
+        state = self.page.evaluate(
+            """() => {
+                const raw = sessionStorage.getItem('django.admin.filtersState');
+                const details = Array.from(document.querySelectorAll('details')).map(
+                    (el, i) => ({
+                        index: i,
+                        title: el.getAttribute('data-filter-title'),
+                        open_prop: el.open,
+                        open_attr: el.getAttribute('open'),
+                        summary_text: (el.querySelector('summary') || {}).innerText || null,
+                    })
+                );
+                return {
+                    url: location.href,
+                    readyState: document.readyState,
+                    filtersState_raw: raw,
+                    filtersState_parsed: raw ? JSON.parse(raw) : null,
+                    details,
+                    filters_js_scripts: Array.from(
+                        document.querySelectorAll('script[src*="filters"]')
+                    ).map((s) => ({src: s.src, defer: s.defer, async: s.async})),
+                };
+            }"""
+        )
+        print(f"\n===== FILTER DEBUG: {label} =====", flush=True)
+        print(f"url={state['url']}", flush=True)
+        print(f"readyState={state['readyState']}", flush=True)
+        print(f"filtersState_raw={state['filtersState_raw']!r}", flush=True)
+        print(f"filtersState_parsed={state['filtersState_parsed']!r}", flush=True)
+        print(f"filters_js_scripts={state['filters_js_scripts']!r}", flush=True)
+        for d in state["details"]:
+            print(
+                f"  details[{d['index']}]: title={d['title']!r} "
+                f"open_prop={d['open_prop']!r} open_attr={d['open_attr']!r} "
+                f"summary={d['summary_text']!r}",
+                flush=True,
+            )
+        print(f"===== END: {label} =====\n", flush=True)
+        return state
+
     def test_collapse_filters(self):
+        # DEBUG: verbose logging to find flaky root cause. Remove after diagnosis.
         self.admin_login(username="super", password="secret")
+        print(
+            "\n[test_collapse_filters] after admin_login, "
+            f"pages={len(self.page.context.pages)}",
+            flush=True,
+        )
+        self._debug_filter_state("01 after login (may be previous page)")
+
         self.page.goto(self.live_server_url + reverse("admin:auth_user_changelist"))
+        self._debug_filter_state("02 after first goto user changelist")
 
         # The UserAdmin has 3 field filters by default: "staff status",
         # "superuser status", and "active".
         details = self.page.locator("details").all()
+        print(
+            f"[test_collapse_filters] locator('details').all() count={len(details)}",
+            flush=True,
+        )
         # All filters are opened at first.
-        for detail in details:
+        for i, detail in enumerate(details):
+            open_before = detail.evaluate("el => el.open")
+            print(
+                f"[test_collapse_filters] expect open=True details[{i}] "
+                f"actual_open={open_before!r}",
+                flush=True,
+            )
             self.expect(detail).to_have_js_property("open", True)
         # Collapse "staff' and "superuser" filters.
-        for detail in details[:2]:
+        for i, detail in enumerate(details[:2]):
+            title = detail.get_attribute("data-filter-title")
+            open_before = detail.evaluate("el => el.open")
+            print(
+                f"[test_collapse_filters] click summary details[:2][{i}] "
+                f"title={title!r} open_before={open_before!r}",
+                flush=True,
+            )
             detail.locator("summary").click()
+            open_after = detail.evaluate("el => el.open")
+            storage_after = self.page.evaluate(
+                "() => sessionStorage.getItem('django.admin.filtersState')"
+            )
+            print(
+                f"[test_collapse_filters] after click details[:2][{i}] "
+                f"title={title!r} open_after={open_after!r} "
+                f"sessionStorage={storage_after!r}",
+                flush=True,
+            )
             self.expect(detail).to_have_js_property("open", False)
+            self._debug_filter_state(f"03 after collapse click index={i} title={title}")
+
+        storage_before_reload = self.page.evaluate(
+            "() => sessionStorage.getItem('django.admin.filtersState')"
+        )
+        print(
+            f"[test_collapse_filters] BEFORE reload sessionStorage="
+            f"{storage_before_reload!r}",
+            flush=True,
+        )
+        self._debug_filter_state("04 immediately before reload")
+
         # Filters are in the same state after refresh.
         self.page.reload()
+        # Capture state ASAP after reload returns (load complete).
+        self._debug_filter_state("05 immediately after reload()")
+
+        staff_open = self.page.locator(
+            "[data-filter-title='staff status']"
+        ).evaluate("el => el.open")
+        superuser_open = self.page.locator(
+            "[data-filter-title='superuser status']"
+        ).evaluate("el => el.open")
+        active_open = self.page.locator(
+            "[data-filter-title='active']"
+        ).evaluate("el => el.open")
+        storage_after_reload = self.page.evaluate(
+            "() => sessionStorage.getItem('django.admin.filtersState')"
+        )
+        print(
+            "[test_collapse_filters] after reload snapshot: "
+            f"staff_open={staff_open!r} superuser_open={superuser_open!r} "
+            f"active_open={active_open!r} sessionStorage={storage_after_reload!r}",
+            flush=True,
+        )
+        print(
+            "[test_collapse_filters] expect staff open=False, "
+            f"actual={staff_open!r}",
+            flush=True,
+        )
         self.expect(
             self.page.locator("[data-filter-title='staff status']")
         ).to_have_js_property("open", False)
+        print(
+            "[test_collapse_filters] expect superuser open=False, "
+            f"actual={superuser_open!r}",
+            flush=True,
+        )
         self.expect(
             self.page.locator("[data-filter-title='superuser status']")
         ).to_have_js_property("open", False)
+        print(
+            "[test_collapse_filters] expect active open=True, "
+            f"actual={active_open!r}",
+            flush=True,
+        )
         self.expect(
             self.page.locator("[data-filter-title='active']")
         ).to_have_js_property("open", True)
+        self._debug_filter_state("06 after post-reload expects")
+
         # Collapse a filter on another view (Bands).
         self.page.goto(
             self.live_server_url + reverse("admin:admin_changelist_band_changelist")
         )
+        self._debug_filter_state("07 after goto band changelist")
+        band_details = self.page.locator("details").all()
+        print(
+            f"[test_collapse_filters] band details count={len(band_details)}",
+            flush=True,
+        )
         self.page.locator("summary").click()
+        open_after_band_click = self.page.locator("details").first.evaluate(
+            "el => el.open"
+        )
+        storage_after_band = self.page.evaluate(
+            "() => sessionStorage.getItem('django.admin.filtersState')"
+        )
+        print(
+            f"[test_collapse_filters] after band summary click "
+            f"first_details_open={open_after_band_click!r} "
+            f"sessionStorage={storage_after_band!r}",
+            flush=True,
+        )
+        self._debug_filter_state("08 after collapse band filter")
+
         # Go to Users view and then, back again to Bands view.
         self.page.goto(self.live_server_url + reverse("admin:auth_user_changelist"))
+        self._debug_filter_state("09 after goto users (from band)")
         self.page.goto(
             self.live_server_url + reverse("admin:admin_changelist_band_changelist")
+        )
+        self._debug_filter_state("10 after return to band changelist")
+        members_open = self.page.locator(
+            "[data-filter-title='number of members']"
+        ).evaluate("el => el.open")
+        print(
+            f"[test_collapse_filters] expect members open=False, "
+            f"actual={members_open!r}",
+            flush=True,
         )
         # The filter remains in the same state.
         self.expect(
             self.page.locator("[data-filter-title='number of members']")
         ).to_have_js_property("open", False)
+        self._debug_filter_state("11 final band state OK")
 
     def test_collapse_filter_with_unescaped_title(self):
+        # DEBUG: verbose logging to find flaky root cause. Remove after diagnosis.
         self.admin_login(username="super", password="secret")
+        self._debug_filter_state("U01 after login")
         changelist_url = reverse("admin:admin_changelist_proxyuser_changelist")
         self.page.goto(self.live_server_url + changelist_url)
+        self._debug_filter_state("U02 after goto proxyuser changelist")
         # Title is escaped.
         filter_title = self.page.locator("[data-filter-title='It\\'s OK']")
+        title_attr = filter_title.get_attribute("data-filter-title")
+        open_before = filter_title.evaluate("el => el.open")
+        print(
+            f"[test_collapse_filter_with_unescaped_title] "
+            f"title_attr={title_attr!r} open_before={open_before!r}",
+            flush=True,
+        )
         filter_title.locator("summary").click()
+        open_after = filter_title.evaluate("el => el.open")
+        storage_after = self.page.evaluate(
+            "() => sessionStorage.getItem('django.admin.filtersState')"
+        )
+        print(
+            f"[test_collapse_filter_with_unescaped_title] after click "
+            f"open_after={open_after!r} sessionStorage={storage_after!r}",
+            flush=True,
+        )
         self.expect(filter_title).to_have_js_property("open", False)
+        self._debug_filter_state("U03 after collapse click")
+        print(
+            "[test_collapse_filter_with_unescaped_title] BEFORE reload "
+            f"sessionStorage={storage_after!r}",
+            flush=True,
+        )
         # Filter is in the same state after refresh.
         self.page.reload()
+        self._debug_filter_state("U04 immediately after reload()")
+        open_after_reload = self.page.locator(
+            "[data-filter-title='It\\'s OK']"
+        ).evaluate("el => el.open")
+        storage_after_reload = self.page.evaluate(
+            "() => sessionStorage.getItem('django.admin.filtersState')"
+        )
+        print(
+            f"[test_collapse_filter_with_unescaped_title] after reload "
+            f"open={open_after_reload!r} sessionStorage={storage_after_reload!r}",
+            flush=True,
+        )
         self.expect(
             self.page.locator("[data-filter-title='It\\'s OK']")
         ).to_have_js_property("open", False)
+        self._debug_filter_state("U05 final OK")
 
     def test_list_display_ordering(self):
         parent_a = Parent.objects.create(name="Parent A")
