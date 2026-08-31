@@ -17,7 +17,11 @@ jobs:
   playwright-sqlite:
     if: contains(github.event.pull_request.labels.*.name, 'playwright')
     runs-on: ubuntu-latest
-    name: SQLite
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+    name: SQLite / ${{ matrix.browser }}
     timeout-minutes: 60
     steps:
       - name: Checkout
@@ -38,11 +42,11 @@ jobs:
         run: python -m pip install --upgrade pip wheel
       - run: python -m pip install -r tests/requirements/py3.txt -e .
       - name: Install Playwright browsers
-        run: python -m playwright install --with-deps chromium
+        run: python -m playwright install --with-deps ${{ matrix.browser }}
       - name: Run Playwright tests
         working-directory: ./tests/
         run: |
-          python -Wall runtests.py --verbosity 2 --noinput --playwright=chromium --settings=test_sqlite --parallel 1
+          python -Wall runtests.py --verbosity 2 --noinput --playwright=${{ matrix.browser }} --settings=test_sqlite --parallel 1
 
   playwright-postgresql:
     if: contains(github.event.pull_request.labels.*.name, 'playwright')
