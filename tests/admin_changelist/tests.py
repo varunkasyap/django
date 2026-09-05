@@ -1932,6 +1932,7 @@ class PlaywrightTests(AdminPlaywrightTestCase):
     available_apps = ["admin_changelist"] + AdminPlaywrightTestCase.available_apps
 
     def setUp(self):
+        super().setUp()
         User.objects.create_superuser(username="super", password="secret", email=None)
 
     def test_add_row_selection(self):
