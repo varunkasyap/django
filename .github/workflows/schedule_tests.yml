@@ -12,6 +12,7 @@ permissions:
 
 jobs:
   windows:
+    if: false  # personal testing: Playwright jobs only
     runs-on: windows-latest
     strategy:
       matrix:
@@ -41,6 +42,7 @@ jobs:
         run: python -Wall tests/runtests.py -v2
 
   pyc-only:
+    if: false  # personal testing: Playwright jobs only
     runs-on: ubuntu-latest
     name: Byte-compiled Django with no source files (only .pyc files)
     timeout-minutes: 60
@@ -72,6 +74,7 @@ jobs:
         run: python -Wall tests/runtests.py --verbosity=2
 
   javascript-tests:
+    if: false  # personal testing: Playwright jobs only
     runs-on: ubuntu-latest
     name: JavaScript tests
     timeout-minutes: 60
@@ -118,7 +121,14 @@ jobs:
       - name: Run Playwright tests
         working-directory: ./tests/
         run: |
-          python -Wall runtests.py --verbosity 2 --noinput --playwright=chromium --settings=test_sqlite --parallel 1
+          python -Wall runtests.py --verbosity 2 --noinput --playwright=chromium --settings=test_sqlite --parallel 1 --tracing=retain-on-failure
+      - name: Upload Playwright traces
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-traces-sqlite
+          path: tests/traces/
+          if-no-files-found: ignore
 
   playwright-postgresql:
     runs-on: ubuntu-latest
@@ -163,9 +173,17 @@ jobs:
       - name: Run Playwright tests
         working-directory: ./tests/
         run: |
-          python -Wall runtests.py --verbosity 2 --noinput --playwright=chromium --settings=test_postgres --parallel 1
+          python -Wall runtests.py --verbosity 2 --noinput --playwright=chromium --settings=test_postgres --parallel 1 --tracing=retain-on-failure
+      - name: Upload Playwright traces
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-traces-postgresql
+          path: tests/traces/
+          if-no-files-found: ignore
 
   postgresql:
+    if: false  # personal testing: Playwright jobs only
     strategy:
       fail-fast: false
       matrix:

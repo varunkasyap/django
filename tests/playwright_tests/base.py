@@ -166,13 +166,20 @@ class PlaywrightTestCase(LiveServerTestCase, metaclass=PlaywrightTestCaseMeta):
 
     def setUp(self):
         super().setUp()
-        if self.video == "off":
-            return
-        # A new page starts a new recording; the previous test closed its page
-        # in _save_video.
-        if self.page.is_closed():
+        if self.video != "off" and self.page.is_closed():
+            # A new page starts a new recording; the previous test closed its
+            # page in _save_video.
             type(self)._open_page()
-        self.addCleanup(self._save_video)
+        if self.tracing != "off":
+            self._browser_context.tracing.start(
+                screenshots=True,
+                snapshots=True,
+                sources=True,
+                title=self.id(),
+            )
+            self.addCleanup(self._save_trace)
+        if self.video != "off":
+            self.addCleanup(self._save_video)
 
     @classmethod
     def _open_page(cls):
@@ -203,6 +210,15 @@ class PlaywrightTestCase(LiveServerTestCase, metaclass=PlaywrightTestCaseMeta):
             if test_id == prefix or test_id.startswith(prefix + " "):
                 return True
         return False
+
+    def _save_trace(self):
+        keep = should_keep_playwright_artifact(self.tracing, self._has_failed())
+        if keep:
+            path = Path.cwd() / "traces" / f"{self._artifact_stem()}.zip"
+            path.parent.mkdir(exist_ok=True, parents=True)
+            self._browser_context.tracing.stop(path=path)
+        else:
+            self._browser_context.tracing.stop()
 
     def _save_video(self):
         if self.page.is_closed():

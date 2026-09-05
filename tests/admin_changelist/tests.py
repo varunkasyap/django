@@ -2144,15 +2144,15 @@ class PlaywrightTests(AdminPlaywrightTestCase):
         # Collapse "staff' and "superuser" filters.
         for detail in details[:2]:
             detail.locator("summary").click()
-            self.expect(detail).not_to_have_attribute("open")
+            self.expect(detail).to_have_js_property("open", False)
         # Filters are in the same state after refresh.
         self.page.reload()
         self.expect(
             self.page.locator("[data-filter-title='staff status']")
-        ).not_to_have_attribute("open")
+        ).to_have_js_property("open", False)
         self.expect(
             self.page.locator("[data-filter-title='superuser status']")
-        ).not_to_have_attribute("open")
+        ).to_have_js_property("open", False)
         self.expect(
             self.page.locator("[data-filter-title='active']")
         ).to_have_attribute("open")
@@ -2169,7 +2169,7 @@ class PlaywrightTests(AdminPlaywrightTestCase):
         # The filter remains in the same state.
         self.expect(
             self.page.locator("[data-filter-title='number of members']")
-        ).not_to_have_attribute("open")
+        ).to_have_js_property("open", False)
 
     def test_collapse_filter_with_unescaped_title(self):
         self.admin_login(username="super", password="secret")
@@ -2178,12 +2178,12 @@ class PlaywrightTests(AdminPlaywrightTestCase):
         # Title is escaped.
         filter_title = self.page.locator("[data-filter-title='It\\'s OK']")
         filter_title.locator("summary").click()
-        self.expect(filter_title).not_to_have_attribute("open")
+        self.expect(filter_title).to_have_js_property("open", False)
         # Filter is in the same state after refresh.
         self.page.reload()
         self.expect(
             self.page.locator("[data-filter-title='It\\'s OK']")
-        ).not_to_have_attribute("open")
+        ).to_have_js_property("open", False)
 
     def test_list_display_ordering(self):
         parent_a = Parent.objects.create(name="Parent A")
