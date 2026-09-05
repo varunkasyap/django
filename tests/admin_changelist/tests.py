@@ -2046,6 +2046,14 @@ class PlaywrightTests(AdminPlaywrightTestCase):
     def setUp(self):
         User.objects.create_superuser(username="super", password="secret", email=None)
 
+    def _wait_for_filter_collapsed(self, title):
+        """Wait for toggle handler to set storage."""
+        self.page.wait_for_function(
+            "([title]) => JSON.parse(sessionStorage.getItem("
+            "'django.admin.filtersState'))?.[title] === false",
+            arg=[title],
+        )
+
     def test_add_row_selection(self):
         """
         The status line for selected rows gets updated correctly (#22038).
@@ -2256,6 +2264,7 @@ class PlaywrightTests(AdminPlaywrightTestCase):
         for detail in details[:2]:
             detail.locator("summary").click()
             self.expect(detail).not_to_have_attribute("open")
+            self._wait_for_filter_collapsed(detail.get_attribute("data-filter-title"))
         # Filters are in the same state after refresh.
         self.page.reload()
         self.expect(
@@ -2272,6 +2281,7 @@ class PlaywrightTests(AdminPlaywrightTestCase):
             self.live_server_url + reverse("admin:admin_changelist_band_changelist")
         )
         self.page.locator("summary").click()
+        self._wait_for_filter_collapsed("number of members")
         # Go to Users view and then, back again to Bands view.
         self.page.goto(self.live_server_url + reverse("admin:auth_user_changelist"))
         self.page.goto(
@@ -2290,6 +2300,7 @@ class PlaywrightTests(AdminPlaywrightTestCase):
         filter_title = self.page.locator("[data-filter-title='It\\'s OK']")
         filter_title.locator("summary").click()
         self.expect(filter_title).not_to_have_attribute("open")
+        self._wait_for_filter_collapsed("It's OK")
         # Filter is in the same state after refresh.
         self.page.reload()
         self.expect(
