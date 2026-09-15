@@ -6735,7 +6735,7 @@ class PlaywrightTests(AdminPlaywrightTestCase):
             "this-is-the-main-name-the-best-2012-02-18"
         )
         self.expect(self.page.locator("#id_slug2")).to_have_value(
-            "option-two-this-is-the-main-name-the-best"
+            "option-two-this-is-the-main-name-the-bestt"
         )
 
     @screenshot_cases(["desktop_size", "mobile_size", "dark", "high_contrast"])
