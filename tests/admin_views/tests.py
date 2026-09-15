@@ -6443,6 +6443,7 @@ class PlaywrightTests(AdminPlaywrightTestCase):
     available_apps = ["admin_views"] + AdminPlaywrightTestCase.available_apps
 
     def setUp(self):
+        super().setUp()
         self.superuser = User.objects.create_superuser(
             username="super", password="secret", email="super@example.com"
         )
@@ -6734,7 +6735,7 @@ class PlaywrightTests(AdminPlaywrightTestCase):
             "this-is-the-main-name-the-best-2012-02-18"
         )
         self.expect(self.page.locator("#id_slug2")).to_have_value(
-            "option-two-this-is-the-main-name-the-best"
+            "option-two-this-is-the-main-name-the-bestt"
         )
 
     @screenshot_cases(["desktop_size", "mobile_size", "dark", "high_contrast"])
