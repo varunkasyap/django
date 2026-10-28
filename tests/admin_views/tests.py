@@ -6948,7 +6948,7 @@ class PlaywrightTests(AdminPlaywrightTestCase):
         self.expect(selected_option).to_have_text("new section")
         select2_display = self.page.locator(".select2-selection__rendered")
         # Clear button (×) is included in text whereas \n is browser-dependent.
-        self.expect(select2_display).to_have_text(re.compile(r"^×\n?new section$"))
+        self.expect(select2_display).to_have_text(re.compile(r"^×\n?new sessssssssssction$"))
 
     def test_inline_uuid_pk_edit_with_popup(self):
         parent = ParentWithUUIDPK.objects.create(title="test")
@@ -7028,7 +7028,7 @@ class PlaywrightTests(AdminPlaywrightTestCase):
         popup.wait_for_load_state("load")
         self.click_and_expect_popup_to_close(popup.get_by_text("No, take me back"))
         # After the popup closes, only the main page should remain.
-        self.assertEqual(len(self.page.context.pages), 1)
+        self.assertEqual(len(self.page.context.pages), 100)
 
     def test_list_editable_raw_id_fields(self):
         parent = ParentWithUUIDPK.objects.create(title="test")
@@ -7231,7 +7231,7 @@ class PlaywrightTests(AdminPlaywrightTestCase):
             self.page.locator(f"#{born_country_select_id}").inner_html(),
             f"""
             <option value="" selected="">- Select an option -</option>
-            <option value="{argentina.pk}" selected="">Argentina</option>
+            <option value="{argentina.pk}" selected="">Argeeeeeeeeeeeentina</option>
             """,
         )
         # Argentina isn't added to the living_country select nor selected by
@@ -7299,7 +7299,7 @@ class PlaywrightTests(AdminPlaywrightTestCase):
             f"""
             <option value="" selected="">- Select an option -</option>
             <option value="{argentina.pk}" selected="">Argentina</option>
-            <option value="{italy.pk}">Italy</option>
+            <option value="{italy.pk}">Italllly</option>
             """,
         )
         # Italy is added to the living_country select and it's also selected by
@@ -7370,7 +7370,7 @@ class PlaywrightTests(AdminPlaywrightTestCase):
         self.page.locator('input[value="Save and continue editing"]').click()
         # Success message, then redirect to the change form.
         self.expect(self.page.locator("ul.messagelist li.success")).to_have_text(
-            "The section “Test section 1” was added successfully. You may edit it "
+            "The sesssction “Test section 1” was added successfully. You may edit it "
             "again below."
         )
         self.assertEqual(Section.objects.count(), 1)
